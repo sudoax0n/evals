@@ -1,0 +1,8 @@
+*.mp4
+*.mov
+*.webm
+*.mkv
+Thumbs.db
+.DS_Store
+operator/
+*.env

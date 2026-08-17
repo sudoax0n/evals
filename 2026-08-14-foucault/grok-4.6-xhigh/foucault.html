@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foucault</title>
+  <style>
+    :root {
+      --void: #100e0c;
+      --stone: #1b1612;
+      --gilt: #c9a56a;
+      --gilt-dim: #8a7048;
+      --vermilion: #c44532;
+      --ink: #e6d7c2;
+      --mute: #9a8b76;
+      --plaque: #16120f;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--void);
+      color: var(--ink);
+      font-family: "Segoe UI", Calibri, system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    h1 {
+      position: fixed;
+      top: max(18px, env(safe-area-inset-top));
+      left: max(24px, env(safe-area-inset-left));
+      z-index: 2;
+      font-family: "Palatino Linotype", Palatino, Cambria, Georgia, serif;
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0.52em;
+      text-indent: 0.52em;
+      text-transform: uppercase;
+      color: var(--gilt);
+    }
+
+    @media (max-width: 919px) {
+      h1 {
+        left: 50%;
+        transform: translateX(-50%);
+      }
+    }
+
+    .plaque {
+      position: fixed;
+      z-index: 2;
+      left: 50%;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      width: min(440px, calc(100vw - 28px));
+      padding: 14px 16px 12px;
+      background: rgba(22, 18, 15, 0.92);
+      border: 1px solid rgba(201, 165, 106, 0.28);
+      box-shadow:
+        inset 0 1px 0 rgba(201, 165, 106, 0.14),
+        0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    @media (min-width: 920px) {
+      .plaque {
+        left: max(24px, env(safe-area-inset-left));
+        bottom: max(24px, env(safe-area-inset-bottom));
+        transform: none;
+        width: 268px;
+      }
+    }
+
+    .lat-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .lat-row label {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+
+    #latOut {
+      font-family: Consolas, "Cascadia Mono", ui-monospace, monospace;
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--gilt);
+    }
+
+    input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 18px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    input[type="range"]:focus {
+      outline: none;
+    }
+
+    input[type="range"]:focus-visible {
+      outline: 1px solid var(--gilt);
+      outline-offset: 4px;
+    }
+
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 2px;
+      background: linear-gradient(90deg, var(--gilt-dim), var(--vermilion));
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      margin-top: -6px;
+      border: 1px solid #3a2410;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #f0d7a0, #b8863a 55%, #5a3a14);
+    }
+
+    input[type="range"]::-moz-range-track {
+      height: 2px;
+      background: linear-gradient(90deg, var(--gilt-dim), var(--vermilion));
+      border: none;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border: 1px solid #3a2410;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #f0d7a0, #b8863a 55%, #5a3a14);
+    }
+
+    .ticks {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 4px;
+      font-family: Consolas, "Cascadia Mono", ui-monospace, monospace;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      color: var(--mute);
+    }
+
+    dl {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 12px;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid color-mix(in srgb, var(--gilt) 18%, transparent);
+    }
+
+    dt {
+      font-size: 9px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--mute);
+    }
+
+    dd {
+      margin-top: 3px;
+      font-family: Consolas, "Cascadia Mono", ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--ink);
+    }
+
+    .foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .scale {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      color: var(--mute);
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid color-mix(in srgb, var(--gilt) 40%, transparent);
+      background: transparent;
+      color: var(--gilt);
+      font: 10px/1 "Segoe UI", Calibri, system-ui, sans-serif;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+
+    button:hover { background: color-mix(in srgb, var(--gilt) 12%, transparent); }
+    button:active { transform: scale(0.98); }
+    button:focus-visible { outline: 1px solid var(--gilt); outline-offset: 3px; }
+
+    .grain {
+      position: fixed;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0.045;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+  </style>
+</head>
+<body>
+  <h1>Foucault</h1>
+  <canvas id="room" aria-label="Foucault pendulum over a compass rose"></canvas>
+  <aside class="plaque">
+    <div class="lat-row">
+      <label for="lat">Latitude</label>
+      <output id="latOut" for="lat">48.9° N</output>
+    </div>
+    <input id="lat" type="range" min="0" max="90" step="0.1" value="48.9">
+    <div class="ticks"><span>0°</span><span>30°</span><span>60°</span><span>90°</span></div>
+    <dl>
+      <div>
+        <dt>Precession</dt>
+        <dd id="prec">272° / day</dd>
+      </div>
+      <div>
+        <dt>Full turn</dt>
+        <dd id="turn">79 s</dd>
+      </div>
+      <div>
+        <dt>Sidereal</dt>
+        <dd id="sid">00:00:00</dd>
+      </div>
+      <div>
+        <dt>Plane</dt>
+        <dd id="plane">0.0°</dd>
+      </div>
+    </dl>
+    <div class="foot">
+      <p class="scale">1 sidereal day = 60 s</p>
+      <button type="button" id="reset">Reset</button>
+    </div>
+  </aside>
+  <div class="grain" aria-hidden="true"></div>
+  <script>
+    (function () {
+      const SIDEREAL_DAY = 60;
+      const OMEGA_EARTH = (Math.PI * 2) / SIDEREAL_DAY;
+      const SWING_PERIOD = 2.2;
+      const OMEGA_SWING = (Math.PI * 2) / SWING_PERIOD;
+      const AMP_FRAC = 0.78;
+
+      const canvas = document.getElementById("room");
+      const latEl = document.getElementById("lat");
+      const latOut = document.getElementById("latOut");
+      const precOut = document.getElementById("prec");
+      const turnOut = document.getElementById("turn");
+      const sidOut = document.getElementById("sid");
+      const planeOut = document.getElementById("plane");
+      const resetBtn = document.getElementById("reset");
+
+      const view = canvas.getContext("2d");
+      const floor = document.createElement("canvas");
+      const floorCtx = floor.getContext("2d");
+      const trail = document.createElement("canvas");
+      const trailCtx = trail.getContext("2d");
+
+      let dpr = 1;
+      let W = 0;
+      let H = 0;
+      let cx = 0;
+      let cy = 0;
+      let R = 0;
+      let amp = 0;
+
+      let simTime = 0;
+      let plane = 0;
+      let lastTs = 0;
+      let prevX = null;
+      let prevY = null;
+      let readoutAcc = 0;
+
+      function pad(n) {
+        return String(n).padStart(2, "0");
+      }
+
+      function latitude() {
+        return Number(latEl.value);
+      }
+
+      function latRad() {
+        return latitude() * Math.PI / 180;
+      }
+
+      function omegaP() {
+        return OMEGA_EARTH * Math.sin(latRad());
+      }
+
+      function formatLat(deg) {
+        if (deg <= 0) return "0°";
+        return deg.toFixed(1) + "° N";
+      }
+
+      function formatSidereal(t) {
+        const day = ((t / SIDEREAL_DAY) % 1 + 1) % 1;
+        const total = Math.floor(day * 86400);
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        return pad(h) + ":" + pad(m) + ":" + pad(s);
+      }
+
+      function bobXY(time, angle) {
+        const r = amp * Math.cos(OMEGA_SWING * time);
+        return {
+          x: cx + r * Math.sin(angle),
+          y: cy - r * Math.cos(angle),
+          r: r
+        };
+      }
+
+      function updateReadouts() {
+        const deg = latitude();
+        const s = Math.sin(deg * Math.PI / 180);
+        latOut.value = formatLat(deg);
+        precOut.textContent = Math.round(360 * s) + "° / day";
+        turnOut.textContent = s < 1e-6 ? "none" : Math.round(SIDEREAL_DAY / s) + " s";
+        sidOut.textContent = formatSidereal(simTime);
+        planeOut.textContent = ((plane * 180 / Math.PI) % 360).toFixed(1) + "°";
+      }
+
+      function vane(ctx, angle, len, waist, light, dark) {
+        const tipX = cx + Math.sin(angle) * len;
+        const tipY = cy - Math.cos(angle) * len;
+        const mid = 0.27;
+        const mx = cx + Math.sin(angle) * len * mid;
+        const my = cy - Math.cos(angle) * len * mid;
+        const lx = mx + Math.sin(angle - Math.PI / 2) * waist;
+        const ly = my - Math.cos(angle - Math.PI / 2) * waist;
+        const rx = mx + Math.sin(angle + Math.PI / 2) * waist;
+        const ry = my - Math.cos(angle + Math.PI / 2) * waist;
+
+        ctx.fillStyle = light;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tipX, tipY);
+        ctx.lineTo(lx, ly);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = dark;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tipX, tipY);
+        ctx.lineTo(rx, ry);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(16,12,8,0.35)";
+        ctx.lineWidth = Math.max(0.6, R * 0.0012);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+      }
+
+      function drawFloor() {
+        const ctx = floorCtx;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+
+        ctx.fillStyle = "#100e0c";
+        ctx.fillRect(0, 0, W, H);
+
+        const wall = R * 1.13;
+        const coping = ctx.createRadialGradient(cx, cy, R * 0.98, cx, cy, wall * 1.06);
+        coping.addColorStop(0, "#2e2720");
+        coping.addColorStop(0.38, "#1c1814");
+        coping.addColorStop(1, "#0b0907");
+        ctx.fillStyle = coping;
+        ctx.beginPath();
+        ctx.arc(cx, cy, wall, 0, Math.PI * 2);
+        ctx.fill();
+
+        for (let i = 0; i < 24; i++) {
+          const a0 = (i / 24) * Math.PI * 2;
+          const a1 = a0 + Math.PI / 12;
+          ctx.strokeStyle = i % 2 === 0 ? "rgba(92,74,50,0.32)" : "rgba(18,14,10,0.28)";
+          ctx.lineWidth = R * 0.078;
+          ctx.beginPath();
+          ctx.arc(cx, cy, R * 1.062, a0 + 0.008, a1 - 0.008);
+          ctx.stroke();
+        }
+
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(a);
+          ctx.fillStyle = "rgba(48, 40, 30, 0.85)";
+          ctx.fillRect(R * 0.995, -R * 0.028, R * 0.12, R * 0.056);
+          ctx.restore();
+        }
+
+        const stone = ctx.createRadialGradient(cx - R * 0.12, cy - R * 0.18, R * 0.05, cx, cy, R);
+        stone.addColorStop(0, "#2c261e");
+        stone.addColorStop(0.45, "#1c1814");
+        stone.addColorStop(1, "#14110e");
+        ctx.fillStyle = stone;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, Math.PI * 2);
+        ctx.clip();
+
+        for (let i = 0; i < 1400; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(Math.random()) * R;
+          const lum = Math.random();
+          ctx.fillStyle = lum > 0.55
+            ? "rgba(232,214,176," + (0.012 + lum * 0.03) + ")"
+            : "rgba(8,6,4," + (0.04 + lum * 0.05) + ")";
+          ctx.fillRect(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 1.1, 1.1);
+        }
+
+        ctx.strokeStyle = "rgba(201,165,106,0.07)";
+        ctx.lineWidth = 1;
+        for (let i = 1; i <= 4; i++) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, R * (0.18 * i), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        for (let i = 0; i < 32; i++) {
+          const a = (i / 32) * Math.PI * 2;
+          ctx.strokeStyle = i % 4 === 0 ? "rgba(201,165,106,0.10)" : "rgba(201,165,106,0.045)";
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.sin(a) * R * 0.08, cy - Math.cos(a) * R * 0.08);
+          ctx.lineTo(cx + Math.sin(a) * R * 0.96, cy - Math.cos(a) * R * 0.96);
+          ctx.stroke();
+        }
+
+        const bands = [
+          { n: 8, len: R * 0.34, waist: R * 0.026, light: "#8f7d5c", dark: "#3a3224", rot: Math.PI / 8 },
+          { n: 4, len: R * 0.50, waist: R * 0.042, light: "#d2b17a", dark: "#6a5224", rot: Math.PI / 4 },
+          { n: 4, len: R * 0.64, waist: R * 0.056, light: "#d24a36", dark: "#6c2218", rot: 0 }
+        ];
+        bands.forEach(function (b) {
+          for (let i = 0; i < b.n; i++) {
+            vane(ctx, b.rot + (i * Math.PI * 2) / b.n, b.len, b.waist, b.light, b.dark);
+          }
+        });
+
+        const ringInner = R * 0.84;
+        const ringOuter = R * 0.955;
+        ctx.strokeStyle = "rgba(201,165,106,0.28)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringInner, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringOuter, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = "rgba(196,69,50,0.22)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, amp, 0, Math.PI * 2);
+        ctx.stroke();
+
+        for (let d = 0; d < 360; d++) {
+          const a = d * Math.PI / 180;
+          const major = d % 10 === 0;
+          const mid = d % 5 === 0;
+          const inner = ringOuter - (major ? R * 0.042 : mid ? R * 0.026 : R * 0.014);
+          ctx.strokeStyle = major ? "rgba(230,215,194,0.7)" : "rgba(201,165,106,0.28)";
+          ctx.lineWidth = major ? 1.2 : 0.7;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.sin(a) * inner, cy - Math.cos(a) * inner);
+          ctx.lineTo(cx + Math.sin(a) * ringOuter, cy - Math.cos(a) * ringOuter);
+          ctx.stroke();
+        }
+
+        ctx.save();
+        ctx.fillStyle = "#d8c7a4";
+        ctx.font = (R * 0.024) + "px Consolas, 'Cascadia Mono', monospace";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "rgba(0,0,0,0.8)";
+        ctx.shadowBlur = 4;
+        for (let d = 30; d < 360; d += 30) {
+          if (d % 90 === 0) continue;
+          const a = d * Math.PI / 180;
+          const rr = (ringInner + ringOuter) * 0.5;
+          ctx.fillText(String(d), cx + Math.sin(a) * rr, cy - Math.cos(a) * rr);
+        }
+        ctx.restore();
+
+        const letters = [
+          { t: "N", a: 0, c: "#e24b36", s: 0.072 },
+          { t: "E", a: Math.PI / 2, c: "#e6d2a4", s: 0.058 },
+          { t: "S", a: Math.PI, c: "#e6d2a4", s: 0.058 },
+          { t: "W", a: -Math.PI / 2, c: "#e6d2a4", s: 0.058 }
+        ];
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.7)";
+        ctx.shadowBlur = 6;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        letters.forEach(function (L) {
+          ctx.fillStyle = L.c;
+          ctx.font = "600 " + (R * L.s) + "px 'Palatino Linotype', Palatino, Cambria, Georgia, serif";
+          const rr = R * 0.735;
+          ctx.fillText(L.t, cx + Math.sin(L.a) * rr, cy - Math.cos(L.a) * rr);
+        });
+        ctx.restore();
+
+        const inter = [
+          { t: "NE", a: Math.PI / 4 },
+          { t: "SE", a: 3 * Math.PI / 4 },
+          { t: "SW", a: 5 * Math.PI / 4 },
+          { t: "NW", a: 7 * Math.PI / 4 }
+        ];
+        ctx.fillStyle = "rgba(201,165,106,0.72)";
+        ctx.font = (R * 0.028) + "px 'Palatino Linotype', Palatino, Cambria, Georgia, serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        inter.forEach(function (L) {
+          const rr = R * 0.735;
+          ctx.fillText(L.t, cx + Math.sin(L.a) * rr, cy - Math.cos(L.a) * rr);
+        });
+
+        const boss = ctx.createRadialGradient(cx - R * 0.012, cy - R * 0.014, R * 0.004, cx, cy, R * 0.07);
+        boss.addColorStop(0, "#f0ddb0");
+        boss.addColorStop(0.45, "#c9a056");
+        boss.addColorStop(1, "#4a3014");
+        ctx.fillStyle = boss;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * 0.056, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(80,48,16,0.7)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, R * 0.018, 0, Math.PI * 2);
+        ctx.fillStyle = "#2a1c0c";
+        ctx.fill();
+
+        ctx.restore();
+
+        const well = ctx.createRadialGradient(cx, cy, R * 0.72, cx, cy, R);
+        well.addColorStop(0, "rgba(0,0,0,0)");
+        well.addColorStop(1, "rgba(0,0,0,0.38)");
+        ctx.fillStyle = well;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(232,214,176,0.18)";
+        ctx.lineWidth = R * 0.012;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R + R * 0.006, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const vignette = ctx.createRadialGradient(cx, cy, R * 0.55, cx, cy, Math.max(W, H) * 0.72);
+        vignette.addColorStop(0, "rgba(0,0,0,0)");
+        vignette.addColorStop(1, "rgba(8,6,4,0.55)");
+        ctx.fillStyle = vignette;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      function clearTrail() {
+        trailCtx.setTransform(1, 0, 0, 1, 0, 0);
+        trailCtx.clearRect(0, 0, trail.width, trail.height);
+        trailCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        prevX = null;
+        prevY = null;
+      }
+
+      function stampTrail(x, y) {
+        if (prevX === null) {
+          prevX = x;
+          prevY = y;
+          return;
+        }
+        const dx = x - prevX;
+        const dy = y - prevY;
+        if (dx * dx + dy * dy < 0.04) return;
+        const t = trailCtx;
+        t.strokeStyle = "rgba(232, 92, 64, 0.58)";
+        t.lineWidth = Math.max(2.1, R * 0.0064);
+        t.lineCap = "round";
+        t.lineJoin = "round";
+        t.beginPath();
+        t.moveTo(prevX, prevY);
+        t.lineTo(x, y);
+        t.stroke();
+        prevX = x;
+        prevY = y;
+      }
+
+      function drawPendulum(p) {
+        const ctx = view;
+        const bobR = Math.max(6, R * 0.034);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, Math.PI * 2);
+        ctx.clip();
+
+        ctx.strokeStyle = "rgba(232, 214, 176, 0.22)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        ctx.moveTo(cx + amp * Math.sin(plane), cy - amp * Math.cos(plane));
+        ctx.lineTo(cx - amp * Math.sin(plane), cy + amp * Math.cos(plane));
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = "rgba(214, 196, 160, 0.55)";
+        ctx.lineWidth = Math.max(0.8, R * 0.0024);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(0,0,0,0.38)";
+        ctx.beginPath();
+        ctx.ellipse(p.x + bobR * 0.35, p.y + bobR * 0.7, bobR * 1.15, bobR * 0.42, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, bobR * 3.2);
+        glow.addColorStop(0, "rgba(226,86,62,0.16)");
+        glow.addColorStop(1, "rgba(226,86,62,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, bobR * 3.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        const brass = ctx.createRadialGradient(
+          p.x - bobR * 0.35,
+          p.y - bobR * 0.42,
+          bobR * 0.08,
+          p.x,
+          p.y,
+          bobR
+        );
+        brass.addColorStop(0, "#f6e6b8");
+        brass.addColorStop(0.35, "#e0b14a");
+        brass.addColorStop(0.78, "#8a5418");
+        brass.addColorStop(1, "#3a220c");
+        ctx.fillStyle = brass;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, bobR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(60,36,12,0.55)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255,248,230,0.55)";
+        ctx.beginPath();
+        ctx.ellipse(p.x - bobR * 0.28, p.y - bobR * 0.34, bobR * 0.22, bobR * 0.14, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        W = window.innerWidth;
+        H = window.innerHeight;
+        canvas.width = Math.floor(W * dpr);
+        canvas.height = Math.floor(H * dpr);
+        floor.width = canvas.width;
+        floor.height = canvas.height;
+        trail.width = canvas.width;
+        trail.height = canvas.height;
+        view.setTransform(dpr, 0, 0, dpr, 0, 0);
+        floorCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        trailCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        const wide = window.matchMedia("(min-width: 920px)").matches;
+        const topPad = 40;
+        const bottomPad = wide ? 28 : 198;
+        const leftPad = wide ? 308 : 16;
+        const rightPad = 16;
+        const availW = Math.max(80, W - leftPad - rightPad);
+        const availH = Math.max(80, H - topPad - bottomPad);
+        cx = leftPad + availW / 2;
+        cy = topPad + availH / 2;
+        R = Math.min(availW, availH) * 0.43;
+        amp = R * AMP_FRAC;
+        drawFloor();
+        clearTrail();
+        const p = bobXY(simTime, plane);
+        prevX = p.x;
+        prevY = p.y;
+      }
+
+      function reset() {
+        simTime = 0;
+        plane = 0;
+        lastTs = 0;
+        clearTrail();
+        updateReadouts();
+      }
+
+      function frame(ts) {
+        if (!lastTs) lastTs = ts;
+        let dt = (ts - lastTs) / 1000;
+        lastTs = ts;
+
+        if (dt > 0.2) {
+          requestAnimationFrame(frame);
+          return;
+        }
+        dt = Math.min(dt, 0.05);
+
+        plane += omegaP() * dt;
+        simTime += dt;
+
+        const p = bobXY(simTime, plane);
+        stampTrail(p.x, p.y);
+
+        view.setTransform(dpr, 0, 0, dpr, 0, 0);
+        view.clearRect(0, 0, W, H);
+        view.drawImage(floor, 0, 0, W, H);
+        view.drawImage(trail, 0, 0, W, H);
+        drawPendulum(p);
+
+        readoutAcc += dt;
+        if (readoutAcc > 0.08) {
+          readoutAcc = 0;
+          updateReadouts();
+        }
+
+        requestAnimationFrame(frame);
+      }
+
+      latEl.addEventListener("input", updateReadouts);
+      resetBtn.addEventListener("click", reset);
+      window.addEventListener("resize", resize);
+
+      resize();
+      updateReadouts();
+      requestAnimationFrame(frame);
+    })();
+  </script>
+</body>
+</html>

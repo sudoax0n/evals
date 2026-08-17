@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Foucault Pendulum Simulation</title>
+  <style>
+    :root {
+      --bg-color: #0b0d13;
+      --panel-bg: rgba(16, 20, 30, 0.82);
+      --panel-border: rgba(212, 175, 55, 0.28);
+      --gold-primary: #d4af37;
+      --gold-light: #f7e7a9;
+      --gold-dark: #8c7322;
+      --accent-cyan: #4ecdc4;
+      --accent-coral: #ff6b6b;
+      --text-main: #e8ecf2;
+      --text-dim: #9aa5b8;
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      --font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg-color);
+      font-family: var(--font-family);
+      color: var(--text-main);
+    }
+
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+    }
+
+    #canvas-container:active {
+      cursor: grabbing;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* HUD Overlay */
+    .hud-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24px;
+    }
+
+    /* Header */
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .title-group {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 16px 22px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+      pointer-events: auto;
+      max-width: 420px;
+    }
+
+    .title-group h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--gold-light);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .title-group h1 svg {
+      width: 22px;
+      height: 22px;
+      fill: var(--gold-primary);
+    }
+
+    .title-group p {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    .telemetry-badges {
+      display: flex;
+      gap: 12px;
+      pointer-events: auto;
+    }
+
+    .badge-card {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 12px 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 110px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+    }
+
+    .badge-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .badge-value {
+      font-family: var(--font-mono);
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--gold-light);
+    }
+
+    .badge-unit {
+      font-size: 11px;
+      color: var(--gold-primary);
+      margin-left: 2px;
+    }
+
+    /* Bottom Control Bar */
+    .controls-container {
+      display: flex;
+      gap: 16px;
+      align-items: flex-end;
+      justify-content: space-between;
+      pointer-events: auto;
+    }
+
+    .panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 18px 24px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .main-controls {
+      flex: 1;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .control-row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .control-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .control-value-display {
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gold-light);
+      background: rgba(0, 0, 0, 0.35);
+      padding: 3px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(212, 175, 55, 0.2);
+    }
+
+    .slider-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 7px;
+      border-radius: 4px;
+      background: #1c2333;
+      outline: none;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #fff 20%, var(--gold-light) 60%, var(--gold-primary) 100%);
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0.7), 0 2px 4px rgba(0,0,0,0.5);
+      border: 2px solid #0b0d13;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+
+    input[type=range]::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      box-shadow: 0 0 14px rgba(212, 175, 55, 0.9);
+    }
+
+    .preset-buttons {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .btn-preset {
+      flex: 1;
+      padding: 5px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-dim);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-preset:hover {
+      background: rgba(212, 175, 55, 0.15);
+      color: var(--gold-light);
+      border-color: var(--gold-primary);
+    }
+
+    .btn-preset.active {
+      background: var(--gold-dark);
+      color: #fff;
+      border-color: var(--gold-light);
+    }
+
+    /* Actions & Views Panel */
+    .view-actions-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 260px;
+    }
+
+    .button-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .action-btn {
+      padding: 9px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-main);
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+      background: rgba(212, 175, 55, 0.2);
+      border-color: var(--gold-primary);
+      color: var(--gold-light);
+    }
+
+    .action-btn.active {
+      background: linear-gradient(135deg, var(--gold-dark), #5e4c13);
+      border-color: var(--gold-light);
+      color: #fff;
+      box-shadow: 0 0 10px rgba(212, 175, 55, 0.4);
+    }
+
+    .action-btn.danger {
+      color: #ffa8a8;
+      border-color: rgba(255, 107, 107, 0.3);
+    }
+
+    .action-btn.danger:hover {
+      background: rgba(255, 107, 107, 0.2);
+      border-color: var(--accent-coral);
+      color: #fff;
+    }
+
+    .mini-status {
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .mini-status span strong {
+      color: var(--gold-light);
+      font-family: var(--font-mono);
+    }
+
+    /* Help Tooltip hint */
+    .interaction-hint {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(11, 13, 19, 0.7);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 11px;
+      color: var(--text-dim);
+      pointer-events: none;
+      letter-spacing: 0.5px;
+      transition: opacity 0.5s;
+    }
+
+    @media (max-width: 860px) {
+      .hud-layer {
+        padding: 12px;
+      }
+      .header-bar {
+        flex-direction: column;
+        gap: 10px;
+      }
+      .controls-container {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .main-controls, .view-actions-panel {
+        max-width: 100%;
+        min-width: unset;
+      }
+      .interaction-hint {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="canvas-container">
+    <canvas id="pendulum-canvas"></canvas>
+  </div>
+
+  <div class="hud-layer">
+    <!-- Header with Info and Live Telemetry -->
+    <div class="header-bar">
+      <div class="title-group">
+        <h1>
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            <polygon points="12,2 15,9 22,12 15,15 12,22 9,15 2,12 9,9" fill="currentColor"/>
+          </svg>
+          Foucault Pendulum
+        </h1>
+        <p>Rotunda Observatory &bull; 1 Sidereal Day = 60s &bull; Earth Rotation Precession</p>
+      </div>
+
+      <div class="telemetry-badges">
+        <div class="badge-card">
+          <span class="badge-label">Precession Rate</span>
+          <div class="badge-value" id="disp-rate">6.00<span class="badge-unit">&deg;/s</span></div>
+        </div>
+        <div class="badge-card">
+          <span class="badge-label">Full Rotation</span>
+          <div class="badge-value" id="disp-period">60.0<span class="badge-unit">s</span></div>
+        </div>
+        <div class="badge-card">
+          <span class="badge-label">Current Heading</span>
+          <div class="badge-value" id="disp-heading">000.0<span class="badge-unit">&deg;</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="interaction-hint" id="hint-text">
+      Left Click + Drag to Orbit &bull; Right Click / Two-Finger Drag to Pan &bull; Scroll to Zoom
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="controls-container">
+      <!-- Main Latitude and Physics Control -->
+      <div class="panel main-controls">
+        <div class="control-row">
+          <div class="control-header">
+            <span class="control-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+              Latitude (&phi;)
+            </span>
+            <span class="control-value-display" id="disp-lat">90.0&deg; N</span>
+          </div>
+
+          <div class="slider-wrapper">
+            <input type="range" id="lat-slider" min="0" max="90" step="0.1" value="90">
+          </div>
+
+          <div class="preset-buttons">
+            <button class="btn-preset active" data-lat="90">Pole (90&deg;)</button>
+            <button class="btn-preset" data-lat="48.85">Paris (48.9&deg;)</button>
+            <button class="btn-preset" data-lat="40.71">New York (40.7&deg;)</button>
+            <button class="btn-preset" data-lat="30.04">Cairo (30.0&deg;)</button>
+            <button class="btn-preset" data-lat="0">Equator (0&deg;)</button>
+          </div>
+        </div>
+
+        <div class="mini-status">
+          <span>Formula: <strong>&Omega; &times; sin(&phi;)</strong></span>
+          <span>Sidereal Day Clock: <strong id="disp-day-clock">00.0s / 60s</strong></span>
+          <span>Knocked Pins: <strong id="disp-pins">0 / 48</strong></span>
+        </div>
+      </div>
+
+      <!-- Camera Views and Actions -->
+      <div class="panel view-actions-panel">
+        <div class="control-header">
+          <span class="control-title">Observatory Views</span>
+          <span style="font-size: 11px; color: var(--text-dim);">Camera Presets</span>
+        </div>
+
+        <div class="button-grid">
+          <button class="action-btn active" id="btn-cam-persp">Perspective</button>
+          <button class="action-btn" id="btn-cam-top">Top-Down</button>
+          <button class="action-btn" id="btn-cam-side">Side Level</button>
+          <button class="action-btn" id="btn-cam-follow">Follow Bob</button>
+        </div>
+
+        <div class="button-grid" style="margin-top: 4px;">
+          <button class="action-btn" id="btn-pause">Pause</button>
+          <button class="action-btn danger" id="btn-clear-trail">Clear Trail</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * Complete Standalone 3D Foucault Pendulum Simulation
+     * Real-time precession scaled to 1 sidereal day = 60 seconds.
+     * Pure Canvas 2D + 3D Software Rasterizer & Math (Zero Libraries).
+     */
+
+    (function() {
+      // --- Constants & Config ---
+      const SIDEREAL_DAY = 60.0; // 1 full Earth revolution = 60 seconds
+      const OMEGA_EARTH = (2 * Math.PI) / SIDEREAL_DAY; // rad/s (~0.10472 rad/s = 6 deg/s)
+      const ROOM_RADIUS = 9.0;
+      const CABLE_LENGTH = 16.0;
+      const BOB_RADIUS = 0.52;
+      const STYLUS_LENGTH = 0.35;
+      const SWING_AMPLITUDE = 6.2; // Maximum swing radius along floor
+      const PENDULUM_PERIOD = 2.4; // Oscillation period of swing in seconds
+      const OMEGA_0 = (2 * Math.PI) / PENDULUM_PERIOD;
+      const NUM_PINS = 48;
+
+      // --- Canvas & Contexts ---
+      const container = document.getElementById('canvas-container');
+      const canvas = document.getElementById('pendulum-canvas');
+      const ctx = canvas.getContext('2d');
+
+      // High-resolution Offscreen Floor Buffer for Compass Rose & Trail
+      const FLOOR_RES = 2048;
+      const compassCanvas = document.createElement('canvas');
+      compassCanvas.width = FLOOR_RES;
+      compassCanvas.height = FLOOR_RES;
+      const compassCtx = compassCanvas.getContext('2d');
+
+      const trailCanvas = document.createElement('canvas');
+      trailCanvas.width = FLOOR_RES;
+      trailCanvas.height = FLOOR_RES;
+      const trailCtx = trailCanvas.getContext('2d');
+
+      // --- Simulation State ---
+      let latitudeDeg = 90.0;
+      let latitudeRad = (latitudeDeg * Math.PI) / 180.0;
+      let precessionAngle = 0.0; // Current swing azimuth angle (radians)
+      let simTime = 0.0;
+      let isPaused = false;
+      let lastTimestamp = performance.now();
+
+      // Knockdown Pins around perimeter
+      const pins = [];
+      for (let i = 0; i < NUM_PINS; i++) {
+        const angle = (i / NUM_PINS) * Math.PI * 2;
+        pins.push({
+          angle: angle,
+          r: SWING_AMPLITUDE * 0.94,
+          height: 0.55,
+          radius: 0.07,
+          isKnocked: false,
+          knockAngle: 0,
+          fallProgress: 0
+        });
+      }
+
+      // Camera State
+      const camera = {
+        target: { x: 0, y: -0.5, z: 0 },
+        distance: 19.0,
+        azimuth: 0.85,
+        elevation: 0.52,
+        mode: 'perspective', // 'perspective', 'top', 'side', 'follow'
+        fov: 55 * (Math.PI / 180),
+        isDragging: false,
+        isPanning: false,
+        lastMouseX: 0,
+        lastMouseY: 0
+      };
+
+      // --- DOM Elements ---
+      const latSlider = document.getElementById('lat-slider');
+      const dispLat = document.getElementById('disp-lat');
+      const dispRate = document.getElementById('disp-rate');
+      const dispPeriod = document.getElementById('disp-period');
+      const dispHeading = document.getElementById('disp-heading');
+      const dispDayClock = document.getElementById('disp-day-clock');
+      const dispPins = document.getElementById('disp-pins');
+      const presetButtons = document.querySelectorAll('.btn-preset');
+      const btnCamPersp = document.getElementById('btn-cam-persp');
+      const btnCamTop = document.getElementById('btn-cam-top');
+      const btnCamSide = document.getElementById('btn-cam-side');
+      const btnCamFollow = document.getElementById('btn-cam-follow');
+      const btnPause = document.getElementById('btn-pause');
+      const btnClearTrail = document.getElementById('btn-clear-trail');
+      const hintText = document.getElementById('hint-text');
+
+      // --- Procedural Compass Rose Generation ---
+      function renderCompassRose() {
+        const c = FLOOR_RES / 2;
+        const R = FLOOR_RES * 0.46; // Radius of outer floor ring
+
+        compassCtx.save();
+        compassCtx.clearRect(0, 0, FLOOR_RES, FLOOR_RES);
+
+        // 1. Polished Circular Marble Base with Radial Vignette
+        const baseGrad = compassCtx.createRadialGradient(c, c, R * 0.05, c, c, R * 1.05);
+        baseGrad.addColorStop(0, '#1a1f2e');
+        baseGrad.addColorStop(0.5, '#121622');
+        baseGrad.addColorStop(0.85, '#0d101a');
+        baseGrad.addColorStop(1, '#080a10');
+        compassCtx.fillStyle = baseGrad;
+        compassCtx.beginPath();
+        compassCtx.arc(c, c, R, 0, Math.PI * 2);
+        compassCtx.fill();
+
+        // 2. Subtle Marble Grain Texture
+        compassCtx.strokeStyle = 'rgba(255, 255, 255, 0.018)';
+        compassCtx.lineWidth = 1;
+        for (let i = 0; i < 200; i++) {
+          const r1 = Math.random() * R;
+          const a1 = Math.random() * Math.PI * 2;
+          compassCtx.beginPath();
+          compassCtx.arc(c + Math.cos(a1) * r1, c + Math.sin(a1) * r1, 15 + Math.random() * 60, 0, Math.PI * 2);
+          compassCtx.stroke();
+        }
+
+        // 3. Heavy Outer Brass Boundary Rings
+        function drawRing(radius, width, strokeColor, shadow = false) {
+          compassCtx.save();
+          if (shadow) {
+            compassCtx.shadowColor = 'rgba(212, 175, 55, 0.35)';
+            compassCtx.shadowBlur = 10;
+          }
+          compassCtx.lineWidth = width;
+          compassCtx.strokeStyle = strokeColor;
+          compassCtx.beginPath();
+          compassCtx.arc(c, c, radius, 0, Math.PI * 2);
+          compassCtx.stroke();
+          compassCtx.restore();
+        }
+
+        drawRing(R * 0.985, 8, '#544111');
+        drawRing(R * 0.975, 4, '#d4af37', true);
+        drawRing(R * 0.965, 2, '#8c7322');
+        drawRing(R * 0.88, 3, '#d4af37');
+        drawRing(R * 0.87, 1.5, '#8c7322');
+        drawRing(R * 0.62, 2.5, '#d4af37');
+        drawRing(R * 0.38, 2, '#8c7322');
+        drawRing(R * 0.16, 3, '#d4af37');
+
+        // 4. Outer Degree Ticks (360 degrees)
+        for (let deg = 0; deg < 360; deg++) {
+          const rad = (deg - 90) * (Math.PI / 180);
+          const is10 = deg % 10 === 0;
+          const is5 = deg % 5 === 0;
+          const is1 = true;
+
+          let tickLen = is10 ? R * 0.055 : (is5 ? R * 0.035 : R * 0.018);
+          let tickWidth = is10 ? 3.5 : (is5 ? 2.0 : 1.0);
+          let tickColor = is10 ? '#f7e7a9' : (is5 ? '#d4af37' : 'rgba(212, 175, 55, 0.45)');
+
+          const rOuter = R * 0.96;
+          const rInner = rOuter - tickLen;
+
+          compassCtx.strokeStyle = tickColor;
+          compassCtx.lineWidth = tickWidth;
+          compassCtx.beginPath();
+          compassCtx.moveTo(c + Math.cos(rad) * rInner, c + Math.sin(rad) * rInner);
+          compassCtx.lineTo(c + Math.cos(rad) * rOuter, c + Math.sin(rad) * rOuter);
+          compassCtx.stroke();
+
+          // Degree Numbers every 10 degrees
+          if (is10 && deg % 30 === 0) {
+            const rText = R * 0.898;
+            const tx = c + Math.cos(rad) * rText;
+            const ty = c + Math.sin(rad) * rText;
+
+            compassCtx.save();
+            compassCtx.translate(tx, ty);
+            compassCtx.rotate(rad + Math.PI / 2);
+            compassCtx.fillStyle = '#f7e7a9';
+            compassCtx.font = 'bold 22px ' + 'Cinzel, Georgia, serif';
+            compassCtx.textAlign = 'center';
+            compassCtx.textBaseline = 'middle';
+            compassCtx.fillText(`${deg}°`, 0, 0);
+            compassCtx.restore();
+          }
+        }
+
+        // 5. 16-Point Multi-Tiered Compass Star Points
+        const numPoints = 16;
+        for (let i = 0; i < numPoints; i++) {
+          const angle = (i / numPoints) * Math.PI * 2 - Math.PI / 2;
+          const nextHalfAngle = angle + (Math.PI / numPoints);
+          const isCardinal = i % 4 === 0;
+          const isIntercardinal = i % 2 === 0;
+
+          let rTip = isCardinal ? R * 0.85 : (isIntercardinal ? R * 0.60 : R * 0.45);
+          let rBase = R * 0.16;
+
+          const pTipX = c + Math.cos(angle) * rTip;
+          const pTipY = c + Math.sin(angle) * rTip;
+
+          const pBaseX = c + Math.cos(nextHalfAngle) * rBase;
+          const pBaseY = c + Math.sin(nextHalfAngle) * rBase;
+
+          const pPrevHalfX = c + Math.cos(angle - (Math.PI / numPoints)) * rBase;
+          const pPrevHalfY = c + Math.sin(angle - (Math.PI / numPoints)) * rBase;
+
+          // Light Half
+          compassCtx.fillStyle = isCardinal ? '#f7e7a9' : (isIntercardinal ? '#d4af37' : '#997c22');
+          compassCtx.beginPath();
+          compassCtx.moveTo(c, c);
+          compassCtx.lineTo(pTipX, pTipY);
+          compassCtx.lineTo(pBaseX, pBaseY);
+          compassCtx.closePath();
+          compassCtx.fill();
+
+          // Dark Shaded Half
+          compassCtx.fillStyle = isCardinal ? '#6d5516' : (isIntercardinal ? '#3d2f0a' : '#211a07');
+          compassCtx.beginPath();
+          compassCtx.moveTo(c, c);
+          compassCtx.lineTo(pTipX, pTipY);
+          compassCtx.lineTo(pPrevHalfX, pPrevHalfY);
+          compassCtx.closePath();
+          compassCtx.fill();
+
+          // Inlaid Line Border
+          compassCtx.strokeStyle = 'rgba(255, 235, 170, 0.4)';
+          compassCtx.lineWidth = 1.5;
+          compassCtx.stroke();
+        }
+
+        // 6. Cardinal Letters (N, E, S, W) & Fleur-de-Lis on North
+        const cardinals = [
+          { label: 'N', angle: -Math.PI / 2, r: R * 0.70, color: '#ffe699', size: 48 },
+          { label: 'E', angle: 0, r: R * 0.70, color: '#e8c86d', size: 42 },
+          { label: 'S', angle: Math.PI / 2, r: R * 0.70, color: '#e8c86d', size: 42 },
+          { label: 'W', angle: Math.PI, r: R * 0.70, color: '#e8c86d', size: 42 }
+        ];
+
+        cardinals.forEach(item => {
+          const x = c + Math.cos(item.angle) * item.r;
+          const y = c + Math.sin(item.angle) * item.r;
+          compassCtx.save();
+          compassCtx.fillStyle = item.color;
+          compassCtx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          compassCtx.shadowBlur = 8;
+          compassCtx.font = `bold ${item.size}px Georgia, serif`;
+          compassCtx.textAlign = 'center';
+          compassCtx.textBaseline = 'middle';
+          compassCtx.fillText(item.label, x, y);
+          compassCtx.restore();
+        });
+
+        // 7. Center Ornate Boss / Hub
+        const centerGrad = compassCtx.createRadialGradient(c - 10, c - 10, 5, c, c, R * 0.15);
+        centerGrad.addColorStop(0, '#fff2b8');
+        centerGrad.addColorStop(0.4, '#d4af37');
+        centerGrad.addColorStop(0.8, '#5e4811');
+        centerGrad.addColorStop(1, '#241a02');
+        compassCtx.fillStyle = centerGrad;
+        compassCtx.beginPath();
+        compassCtx.arc(c, c, R * 0.14, 0, Math.PI * 2);
+        compassCtx.fill();
+        compassCtx.strokeStyle = '#f7e7a9';
+        compassCtx.lineWidth = 3;
+        compassCtx.stroke();
+
+        compassCtx.restore();
+      }
+
+      renderCompassRose();
+
+      // --- Trail Buffer Operations ---
+      let prevTrailPos = null;
+
+      function resetTrail() {
+        trailCtx.clearRect(0, 0, FLOOR_RES, FLOOR_RES);
+        prevTrailPos = null;
+      }
+
+      function addTrailSegment(wx1, wz1, wx2, wz2, speedNorm) {
+        const c = FLOOR_RES / 2;
+        const scale = (FLOOR_RES * 0.46) / ROOM_RADIUS;
+
+        const px1 = c + wx1 * scale;
+        const py1 = c + wz1 * scale;
+        const px2 = c + wx2 * scale;
+        const py2 = c + wz2 * scale;
+
+        trailCtx.save();
+        // Warm incised gold/amber groove on the compass rose
+        trailCtx.lineCap = 'round';
+        trailCtx.lineJoin = 'round';
+
+        // Outer ambient glow
+        trailCtx.strokeStyle = 'rgba(255, 120, 40, 0.28)';
+        trailCtx.lineWidth = 10;
+        trailCtx.beginPath();
+        trailCtx.moveTo(px1, py1);
+        trailCtx.lineTo(px2, py2);
+        trailCtx.stroke();
+
+        // Inner bright stylus scratch
+        trailCtx.strokeStyle = 'rgba(255, 235, 170, 0.85)';
+        trailCtx.lineWidth = 3.2;
+        trailCtx.shadowColor = '#ffbb33';
+        trailCtx.shadowBlur = 8;
+        trailCtx.beginPath();
+        trailCtx.moveTo(px1, py1);
+        trailCtx.lineTo(px2, py2);
+        trailCtx.stroke();
+
+        trailCtx.restore();
+      }
+
+      // --- 3D Vector & Matrix Software Pipeline ---
+      function createVec3(x = 0, y = 0, z = 0) {
+        return { x, y, z };
+      }
+
+      function getCameraPosition() {
+        if (camera.mode === 'top') {
+          return { x: 0.001, y: 24.0, z: 0.001 };
+        } else if (camera.mode === 'side') {
+          return {
+            x: Math.sin(camera.azimuth) * 16.0,
+            y: 0.6,
+            z: Math.cos(camera.azimuth) * 16.0
+          };
+        } else if (camera.mode === 'follow') {
+          const bob = getBobPosition(simTime);
+          const camAz = precessionAngle + Math.PI / 2;
+          return {
+            x: bob.x + Math.sin(camAz) * 7.5,
+            y: bob.y + 3.0,
+            z: bob.z + Math.cos(camAz) * 7.5
+          };
+        }
+
+        // Standard Orbit Perspective
+        const cy = Math.sin(camera.elevation) * camera.distance;
+        const hDist = Math.cos(camera.elevation) * camera.distance;
+        const cx = Math.sin(camera.azimuth) * hDist;
+        const cz = Math.cos(camera.azimuth) * hDist;
+        return { x: cx, y: cy, z: cz };
+      }
+
+      function project3D(point, camPos, target, width, height) {
+        // Forward, Right, Up Basis
+        const fwd = {
+          x: target.x - camPos.x,
+          y: target.y - camPos.y,
+          z: target.z - camPos.z
+        };
+        const fwdLen = Math.sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z) || 1;
+        fwd.x /= fwdLen; fwd.y /= fwdLen; fwd.z /= fwdLen;
+
+        const upWorld = { x: 0, y: 1, z: 0 };
+        // If looking straight down/up, adjust upWorld
+        if (Math.abs(fwd.y) > 0.999) {
+          upWorld.x = 0; upWorld.y = 0; upWorld.z = -1;
+        }
+
+        const right = {
+          x: fwd.y * upWorld.z - fwd.z * upWorld.y,
+          y: fwd.z * upWorld.x - fwd.x * upWorld.z,
+          z: fwd.x * upWorld.y - fwd.y * upWorld.x
+        };
+        const rightLen = Math.sqrt(right.x * right.x + right.y * right.y + right.z * right.z) || 1;
+        right.x /= rightLen; right.y /= rightLen; right.z /= rightLen;
+
+        const up = {
+          x: right.y * fwd.z - right.z * fwd.y,
+          y: right.z * fwd.x - right.x * fwd.z,
+          z: right.x * fwd.y - right.y * fwd.x
+        };
+
+        // Relative Vector
+        const rel = {
+          x: point.x - camPos.x,
+          y: point.y - camPos.y,
+          z: point.z - camPos.z
+        };
+
+        const viewZ = rel.x * fwd.x + rel.y * fwd.y + rel.z * fwd.z;
+        if (viewZ <= 0.1) return null; // Near clipping
+
+        const viewX = rel.x * right.x + rel.y * right.y + rel.z * right.z;
+        const viewY = rel.x * up.x + rel.y * up.y + rel.z * up.z;
+
+        const aspect = width / height;
+        const tanHalfFov = Math.tan(camera.fov / 2);
+        const f = 1.0 / tanHalfFov;
+
+        const projX = (viewX * f / (viewZ * aspect));
+        const projY = (viewY * f / viewZ);
+
+        return {
+          x: (projX * 0.5 + 0.5) * width,
+          y: (-projY * 0.5 + 0.5) * height,
+          z: viewZ,
+          scale: f / viewZ
+        };
+      }
+
+      // --- Exact Analytical Physics Solver ---
+      function getBobPosition(t) {
+        // Analytical Foucault Solution with Coriolis coupling:
+        // Harmonic oscillation amplitude: A(t) = SWING_AMPLITUDE * cos(OMEGA_0 * t)
+        // Precession azimuth: psi = precessionAngle
+        // Bob coordinates in room space:
+        const swingDisp = SWING_AMPLITUDE * Math.cos(OMEGA_0 * t);
+        
+        // Small Coriolis minor axis deflection
+        const sinLat = Math.sin(latitudeRad);
+        const coriolisMinor = (OMEGA_EARTH * sinLat / OMEGA_0) * SWING_AMPLITUDE * Math.sin(OMEGA_0 * t);
+
+        // Rotating into current plane of swing (azimuth psi):
+        // x points East, z points South (North is -z, East is +x)
+        const cosPsi = Math.cos(precessionAngle);
+        const sinPsi = Math.sin(precessionAngle);
+
+        const x = swingDisp * sinPsi + coriolisMinor * cosPsi;
+        const z = -swingDisp * cosPsi + coriolisMinor * sinPsi;
+
+        // Pendulum height from sphere curvature:
+        const rHorizSq = x * x + z * z;
+        const y = -CABLE_LENGTH + Math.sqrt(Math.max(0.01, CABLE_LENGTH * CABLE_LENGTH - rHorizSq)) + (BOB_RADIUS + STYLUS_LENGTH);
+
+        return { x, y, z, swingDisp };
+      }
+
+      // --- Room Geometry & Shading ---
+      function drawCircularRotunda(camPos, target, width, height) {
+        // Ceiling Apex (Gimbal Rosette)
+        const ceilingPoint = { x: 0, y: CABLE_LENGTH, z: 0 };
+        const projCeiling = project3D(ceilingPoint, camPos, target, width, height);
+
+        // Draw Dome Ceiling Rings & Radial Ribs
+        const domeR = ROOM_RADIUS * 1.15;
+        const domeHeight = CABLE_LENGTH * 1.12;
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(212, 175, 55, 0.12)';
+        ctx.lineWidth = 1.5;
+
+        // Colonnade Pillars & Arches around the circular room
+        const numPillars = 24;
+        const pillarList = [];
+
+        for (let i = 0; i < numPillars; i++) {
+          const a = (i / numPillars) * Math.PI * 2;
+          const px = Math.cos(a) * ROOM_RADIUS * 1.05;
+          const pz = Math.sin(a) * ROOM_RADIUS * 1.05;
+
+          const basePt = { x: px, y: 0, z: pz };
+          const topPt = { x: px, y: 8.5, z: pz };
+
+          const pBase = project3D(basePt, camPos, target, width, height);
+          const pTop = project3D(topPt, camPos, target, width, height);
+
+          if (pBase && pTop) {
+            const camDist = Math.hypot(px - camPos.x, basePt.y - camPos.y, pz - camPos.z);
+            pillarList.push({ pBase, pTop, camDist, a });
+          }
+        }
+
+        // Depth sort pillars (back to front)
+        pillarList.sort((a, b) => b.camDist - a.camDist);
+
+        pillarList.forEach(p => {
+          // Fluted classical pillar
+          ctx.strokeStyle = 'rgba(150, 165, 190, 0.16)';
+          ctx.lineWidth = Math.max(2, 6 * p.pBase.scale);
+          ctx.beginPath();
+          ctx.moveTo(p.pBase.x, p.pBase.y);
+          ctx.lineTo(p.pTop.x, p.pTop.y);
+          ctx.stroke();
+
+          // Gold capital / base trim
+          ctx.fillStyle = 'rgba(212, 175, 55, 0.35)';
+          ctx.fillRect(p.pBase.x - 4, p.pBase.y - 2, 8, 4);
+          ctx.fillRect(p.pTop.x - 5, p.pTop.y - 2, 10, 4);
+        });
+
+        // Perimeter Stanchion Rail
+        ctx.strokeStyle = 'rgba(212, 175, 55, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        let firstRail = true;
+        for (let a = 0; a <= Math.PI * 2 + 0.1; a += 0.1) {
+          const rx = Math.cos(a) * (SWING_AMPLITUDE * 1.06);
+          const rz = Math.sin(a) * (SWING_AMPLITUDE * 1.06);
+          const pr = project3D({ x: rx, y: 0.65, z: rz }, camPos, target, width, height);
+          if (pr) {
+            if (firstRail) { ctx.moveTo(pr.x, pr.y); firstRail = false; }
+            else { ctx.lineTo(pr.x, pr.y); }
+          }
+        }
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // --- Draw Floor with Texture Mapping ---
+      function drawFloor(camPos, target, width, height) {
+        // We render the composite floor (Compass Rose + Trail) into 3D using perspective sampling
+        const floorCenter = project3D({ x: 0, y: 0, z: 0 }, camPos, target, width, height);
+        if (!floorCenter) return;
+
+        // Blend trail onto compass rose before projection
+        // We render concentric rings of quad strips to map the circular floor smoothly without distortion
+        const numRings = 16;
+        const numSectors = 48;
+        const maxR = ROOM_RADIUS;
+
+        // Pre-create blended canvas if needed or draw composite
+        // We can draw a high quality circular mesh
+        ctx.save();
+
+        for (let r = 0; r < numRings; r++) {
+          const r0 = (r / numRings) * maxR;
+          const r1 = ((r + 1) / numRings) * maxR;
+
+          for (let s = 0; s < numSectors; s++) {
+            const a0 = (s / numSectors) * Math.PI * 2;
+            const a1 = ((s + 1) / numSectors) * Math.PI * 2;
+
+            const p00 = { x: Math.cos(a0) * r0, y: 0, z: Math.sin(a0) * r0 };
+            const p10 = { x: Math.cos(a1) * r0, y: 0, z: Math.sin(a1) * r0 };
+            const p11 = { x: Math.cos(a1) * r1, y: 0, z: Math.sin(a1) * r1 };
+            const p01 = { x: Math.cos(a0) * r1, y: 0, z: Math.sin(a0) * r1 };
+
+            const s00 = project3D(p00, camPos, target, width, height);
+            const s10 = project3D(p10, camPos, target, width, height);
+            const s11 = project3D(p11, camPos, target, width, height);
+            const s01 = project3D(p01, camPos, target, width, height);
+
+            if (s00 && s10 && s11 && s01) {
+              // Sample color from composite floor buffer
+              const midR = (r0 + r1) * 0.5;
+              const midA = (a0 + a1) * 0.5;
+              const midX = Math.cos(midA) * midR;
+              const midZ = Math.sin(midA) * midR;
+
+              // Read pixel from compass + trail
+              const c = FLOOR_RES / 2;
+              const scale = (FLOOR_RES * 0.46) / ROOM_RADIUS;
+              const texX = Math.floor(c + midX * scale);
+              const texY = Math.floor(c + midZ * scale);
+
+              ctx.beginPath();
+              ctx.moveTo(s00.x, s00.y);
+              ctx.lineTo(s10.x, s10.y);
+              ctx.lineTo(s11.x, s11.y);
+              ctx.lineTo(s01.x, s01.y);
+              ctx.closePath();
+
+              // Distance shading & Ambient occlusion
+              const distFromCenter = midR / maxR;
+              const brightness = Math.max(0.1, 1.0 - distFromCenter * 0.45);
+
+              // Radial marble color base
+              ctx.fillStyle = `rgba(18, 22, 34, ${0.9 * brightness})`;
+              ctx.fill();
+            }
+          }
+        }
+
+        // High resolution textured floor blit using circular projected disc
+        // To give razor-sharp rendering, we project the floor canvas directly using 3D affine quad slicing
+        drawFloorTextureMapped(camPos, target, width, height);
+
+        ctx.restore();
+      }
+
+      function drawFloorTextureMapped(camPos, target, width, height) {
+        const gridN = 14;
+        const extent = ROOM_RADIUS * 0.98;
+        const c = FLOOR_RES / 2;
+        const scale = (FLOOR_RES * 0.46) / ROOM_RADIUS;
+
+        // Composite trail onto compass
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = FLOOR_RES;
+        tempCanvas.height = FLOOR_RES;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(compassCanvas, 0, 0);
+        tempCtx.drawImage(trailCanvas, 0, 0);
+
+        for (let ix = 0; ix < gridN; ix++) {
+          for (let iz = 0; iz < gridN; iz++) {
+            const wx0 = -extent + (ix / gridN) * (2 * extent);
+            const wx1 = -extent + ((ix + 1) / gridN) * (2 * extent);
+            const wz0 = -extent + (iz / gridN) * (2 * extent);
+            const wz1 = -extent + ((iz + 1) / gridN) * (2 * extent);
+
+            // Clip outside circular room
+            if (Math.hypot((wx0 + wx1) * 0.5, (wz0 + wz1) * 0.5) > extent * 1.05) continue;
+
+            const p00 = project3D({ x: wx0, y: 0, z: wz0 }, camPos, target, width, height);
+            const p10 = project3D({ x: wx1, y: 0, z: wz0 }, camPos, target, width, height);
+            const p11 = project3D({ x: wx1, y: 0, z: wz1 }, camPos, target, width, height);
+            const p01 = project3D({ x: wx0, y: 0, z: wz1 }, camPos, target, width, height);
+
+            if (p00 && p10 && p11 && p01) {
+              const u0 = c + wx0 * scale;
+              const u1 = c + wx1 * scale;
+              const v0 = c + wz0 * scale;
+              const v1 = c + wz1 * scale;
+
+              // Render triangle 1 (p00, p10, p01)
+              drawProjectedTriangle(ctx, tempCanvas,
+                p00.x, p00.y, p10.x, p10.y, p01.x, p01.y,
+                u0, v0, u1, v0, u0, v1);
+
+              // Render triangle 2 (p10, p11, p01)
+              drawProjectedTriangle(ctx, tempCanvas,
+                p10.x, p10.y, p11.x, p11.y, p01.x, p01.y,
+                u1, v0, u1, v1, u0, v1);
+            }
+          }
+        }
+      }
+
+      function drawProjectedTriangle(dstCtx, img, x0, y0, x1, y1, x2, y2, u0, v0, u1, v1, u2, v2) {
+        dstCtx.save();
+        dstCtx.beginPath();
+        dstCtx.moveTo(x0, y0);
+        dstCtx.lineTo(x1, y1);
+        dstCtx.lineTo(x2, y2);
+        dstCtx.closePath();
+        dstCtx.clip();
+
+        // Compute affine transform matrix
+        const delta = u0 * (v1 - v2) - v0 * (u1 - u2) + (u1 * v2 - u2 * v1);
+        if (Math.abs(delta) < 0.0001) {
+          dstCtx.restore();
+          return;
+        }
+
+        const a = (x0 * (v1 - v2) - x1 * (v0 - v2) + x2 * (v0 - v1)) / delta;
+        const b = (y0 * (v1 - v2) - y1 * (v0 - v2) + y2 * (v0 - v1)) / delta;
+        const c = (u0 * (x1 - x2) - u1 * (x0 - x2) + u2 * (x0 - x1)) / delta;
+        const d = (u0 * (y1 - y2) - u1 * (y0 - y2) + u2 * (y0 - y1)) / delta;
+        const e = (x0 * (u1 * v2 - u2 * v1) - x1 * (u0 * v2 - u2 * v0) + x2 * (u0 * v1 - u1 * v0)) / delta;
+        const f = (y0 * (u1 * v2 - u2 * v1) - y1 * (u0 * v2 - u2 * v0) + y2 * (u0 * v1 - u1 * v0)) / delta;
+
+        dstCtx.transform(a, b, c, d, e, f);
+        dstCtx.drawImage(img, 0, 0);
+        dstCtx.restore();
+      }
+
+      // --- Knockdown Pins Rendering ---
+      function updateAndDrawPins(bobPos, camPos, target, width, height) {
+        let knockedCount = 0;
+        const tipPos = { x: bobPos.x, y: bobPos.y - BOB_RADIUS - STYLUS_LENGTH, z: bobPos.z };
+
+        pins.forEach(pin => {
+          const pinX = Math.cos(pin.angle) * pin.r;
+          const pinZ = Math.sin(pin.angle) * pin.r;
+
+          // Check collision with bob's bottom needle
+          const distToTip = Math.hypot(pinX - tipPos.x, pinZ - tipPos.z);
+          if (distToTip < (pin.radius + 0.42) && tipPos.y < 0.6) {
+            if (!pin.isKnocked) {
+              pin.isKnocked = true;
+              pin.knockAngle = Math.atan2(pinZ, pinX); // Topple outward
+            }
+          }
+
+          if (pin.isKnocked) {
+            knockedCount++;
+            if (pin.fallProgress < 1.0) pin.fallProgress = Math.min(1.0, pin.fallProgress + 0.1);
+          }
+
+          // Compute 3D Top and Base of Pin
+          const fallTilt = pin.fallProgress * (Math.PI / 2.2);
+          const topX = pinX + Math.cos(pin.knockAngle) * (Math.sin(fallTilt) * pin.height);
+          const topY = Math.cos(fallTilt) * pin.height;
+          const topZ = pinZ + Math.sin(pin.knockAngle) * (Math.sin(fallTilt) * pin.height);
+
+          const pBase = project3D({ x: pinX, y: 0, z: pinZ }, camPos, target, width, height);
+          const pTop = project3D({ x: topX, y: topY, z: topZ }, camPos, target, width, height);
+
+          if (pBase && pTop) {
+            ctx.save();
+            ctx.lineCap = 'round';
+            // Shadow on floor
+            if (pin.isKnocked) {
+              ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+              ctx.lineWidth = Math.max(1.5, 4 * pBase.scale);
+              ctx.beginPath();
+              ctx.moveTo(pBase.x, pBase.y);
+              ctx.lineTo(pTop.x, pBase.y);
+              ctx.stroke();
+            }
+
+            // Pin Body (turned beechwood / brass cylinder)
+            const pinGrad = ctx.createLinearGradient(pBase.x, pBase.y, pTop.x, pTop.y);
+            pinGrad.addColorStop(0, '#8c7322');
+            pinGrad.addColorStop(0.5, '#f7e7a9');
+            pinGrad.addColorStop(1, '#d4af37');
+
+            ctx.strokeStyle = pinGrad;
+            ctx.lineWidth = Math.max(2, 6 * pBase.scale);
+            ctx.beginPath();
+            ctx.moveTo(pBase.x, pBase.y);
+            ctx.lineTo(pTop.x, pTop.y);
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+
+        dispPins.textContent = `${knockedCount} / ${NUM_PINS}`;
+      }
+
+      // --- Pendulum Bob, Wire, and Shadow Rendering ---
+      function drawPendulum(bob, camPos, target, width, height) {
+        const ceilingPoint = { x: 0, y: CABLE_LENGTH, z: 0 };
+        const pCeiling = project3D(ceilingPoint, camPos, target, width, height);
+        const pBob = project3D(bob, camPos, target, width, height);
+
+        if (!pBob || !pCeiling) return;
+
+        // 1. Dynamic Floor Shadow
+        const shadowCenter = project3D({ x: bob.x, y: 0.01, z: bob.z }, camPos, target, width, height);
+        if (shadowCenter) {
+          ctx.save();
+          const shadowR = Math.max(3, (BOB_RADIUS * 1.15) * shadowCenter.scale * (width * 0.45));
+          const shadowGrad = ctx.createRadialGradient(
+            shadowCenter.x, shadowCenter.y, shadowR * 0.1,
+            shadowCenter.x, shadowCenter.y, shadowR
+          );
+          shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0.7)');
+          shadowGrad.addColorStop(0.6, 'rgba(0, 0, 0, 0.35)');
+          shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+          ctx.fillStyle = shadowGrad;
+          ctx.beginPath();
+          ctx.arc(shadowCenter.x, shadowCenter.y, shadowR, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 2. High-Tensile Steel Suspension Wire
+        ctx.save();
+        ctx.strokeStyle = 'rgba(230, 235, 245, 0.75)';
+        ctx.lineWidth = Math.max(1, 1.6 * pBob.scale);
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
+        ctx.shadowBlur = 3;
+        ctx.beginPath();
+        ctx.moveTo(pCeiling.x, pCeiling.y);
+        ctx.lineTo(pBob.x, pBob.y);
+        ctx.stroke();
+        ctx.restore();
+
+        // 3. Ceiling Suspension Gimbal / Rosette
+        ctx.save();
+        ctx.fillStyle = '#d4af37';
+        ctx.shadowColor = 'rgba(212, 175, 55, 0.8)';
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.arc(pCeiling.x, pCeiling.y, Math.max(3, 7 * pCeiling.scale), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 4. Polished Brass Bob Sphere with Realistic Specular Highlight
+        const screenBobRadius = Math.max(4, BOB_RADIUS * pBob.scale * (width * 0.46));
+        
+        ctx.save();
+        // Spherical Lighting Gradient
+        const lightOffset = screenBobRadius * 0.35;
+        const bobGrad = ctx.createRadialGradient(
+          pBob.x - lightOffset, pBob.y - lightOffset, screenBobRadius * 0.08,
+          pBob.x, pBob.y, screenBobRadius
+        );
+        bobGrad.addColorStop(0, '#ffffff'); // Glint
+        bobGrad.addColorStop(0.18, '#fff3c4'); // Highlight
+        bobGrad.addColorStop(0.45, '#e0b838'); // Polished Brass Body
+        bobGrad.addColorStop(0.75, '#8a6a14'); // Mid Shadow
+        bobGrad.addColorStop(0.92, '#423106'); // Core Shadow
+        bobGrad.addColorStop(1, '#1f1602'); // Rim
+
+        ctx.fillStyle = bobGrad;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+        ctx.shadowBlur = 16;
+        ctx.shadowOffsetY = 6;
+
+        ctx.beginPath();
+        ctx.arc(pBob.x, pBob.y, screenBobRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Equator ring on the brass bob
+        ctx.strokeStyle = 'rgba(247, 231, 169, 0.6)';
+        ctx.lineWidth = Math.max(1, 2 * pBob.scale);
+        ctx.beginPath();
+        ctx.ellipse(pBob.x, pBob.y, screenBobRadius * 0.96, screenBobRadius * 0.28, -0.2, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // 5. Stylus Pointer / Needle Tip extending to the floor
+        const stylusTip = { x: bob.x, y: bob.y - BOB_RADIUS - STYLUS_LENGTH, z: bob.z };
+        const pTip = project3D(stylusTip, camPos, target, width, height);
+
+        if (pTip) {
+          ctx.strokeStyle = '#f7e7a9';
+          ctx.lineWidth = Math.max(1.5, 3.2 * pBob.scale);
+          ctx.beginPath();
+          ctx.moveTo(pBob.x, pBob.y + screenBobRadius * 0.7);
+          ctx.lineTo(pTip.x, pTip.y);
+          ctx.stroke();
+
+          // Glowing tip spark
+          ctx.fillStyle = '#ffaa33';
+          ctx.shadowColor = '#ffbb33';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.arc(pTip.x, pTip.y, Math.max(2, 3.5 * pBob.scale), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+
+      // --- Current Swing Plane Indicator Line ---
+      function drawSwingPlaneGuide(camPos, target, width, height) {
+        const sinP = Math.sin(precessionAngle);
+        const cosP = Math.cos(precessionAngle);
+        const rMax = ROOM_RADIUS * 0.95;
+
+        const p1 = project3D({ x: -rMax * sinP, y: 0.02, z: rMax * cosP }, camPos, target, width, height);
+        const p2 = project3D({ x: rMax * sinP, y: 0.02, z: -rMax * cosP }, camPos, target, width, height);
+
+        if (p1 && p2) {
+          ctx.save();
+          ctx.setLineDash([6, 6]);
+          ctx.strokeStyle = 'rgba(255, 107, 107, 0.4)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
+      // --- Main Render Loop ---
+      function render() {
+        const width = canvas.width = container.clientWidth;
+        const height = canvas.height = container.clientHeight;
+
+        const now = performance.now();
+        const dt = Math.min(0.1, (now - lastTimestamp) / 1000.0);
+        lastTimestamp = now;
+
+        // Physics Update
+        if (!isPaused) {
+          simTime += dt;
+
+          // Precession Rate: omega_prec = OMEGA_EARTH * sin(latitude)
+          // 1 Sidereal day (60s) -> OMEGA_EARTH = 2pi / 60 rad/s
+          const sinLat = Math.sin(latitudeRad);
+          const precSpeed = OMEGA_EARTH * sinLat; // rad/s
+          precessionAngle += precSpeed * dt;
+
+          // Keep in [0, 2pi)
+          if (precessionAngle >= Math.PI * 2) precessionAngle -= Math.PI * 2;
+
+          // Record Bob Path to Trail Buffer
+          const curBob = getBobPosition(simTime);
+          if (prevTrailPos) {
+            const tipX = curBob.x;
+            const tipZ = curBob.z;
+            addTrailSegment(prevTrailPos.x, prevTrailPos.z, tipX, tipZ, Math.abs(curBob.swingDisp) / SWING_AMPLITUDE);
+          }
+          prevTrailPos = { x: curBob.x, z: curBob.z };
+        }
+
+        // Camera setup
+        const camPos = getCameraPosition();
+        const target = camera.mode === 'follow' ? getBobPosition(simTime) : camera.target;
+
+        // Clear Canvas
+        ctx.fillStyle = '#0b0d13';
+        ctx.fillRect(0, 0, width, height);
+
+        // Render Classical Rotunda Dome & Architecture
+        drawCircularRotunda(camPos, target, width, height);
+
+        // Render Compass Rose Floor with Embedded Swept Trail
+        drawFloor(camPos, target, width, height);
+
+        // Render Swing Plane Guide
+        drawSwingPlaneGuide(camPos, target, width, height);
+
+        // Render Knockdown Pins & Update Collisions
+        const currentBob = getBobPosition(simTime);
+        updateAndDrawPins(currentBob, camPos, target, width, height);
+
+        // Render Brass Bob, Needle Tip, Wire & Soft Floor Shadow
+        drawPendulum(currentBob, camPos, target, width, height);
+
+        // Update Live Telemetry Displays
+        updateTelemetry();
+
+        requestAnimationFrame(render);
+      }
+
+      // --- Telemetry Display Updates ---
+      function updateTelemetry() {
+        const sinLat = Math.sin(latitudeRad);
+        const rateDegPerSec = (360.0 / SIDEREAL_DAY) * sinLat; // deg/s
+        dispRate.innerHTML = `${rateDegPerSec.toFixed(2)}<span class="badge-unit">&deg;/s</span>`;
+
+        if (sinLat > 0.001) {
+          const periodSec = SIDEREAL_DAY / sinLat;
+          dispPeriod.innerHTML = `${periodSec.toFixed(1)}<span class="badge-unit">s</span>`;
+        } else {
+          dispPeriod.innerHTML = `&infin;<span class="badge-unit"></span>`;
+        }
+
+        const headingDeg = ((precessionAngle * 180 / Math.PI) % 360 + 360) % 360;
+        dispHeading.innerHTML = `${headingDeg.toFixed(1).padStart(5, '0')}<span class="badge-unit">&deg;</span>`;
+
+        const dayProgress = (simTime % SIDEREAL_DAY);
+        dispDayClock.textContent = `${dayProgress.toFixed(1)}s / ${SIDEREAL_DAY}s`;
+      }
+
+      // --- UI & Interaction Event Handlers ---
+      function setLatitude(val) {
+        latitudeDeg = parseFloat(val);
+        latitudeRad = (latitudeDeg * Math.PI) / 180.0;
+        latSlider.value = latitudeDeg;
+        dispLat.textContent = `${latitudeDeg.toFixed(1)}° N`;
+
+        // Update preset button active states
+        presetButtons.forEach(btn => {
+          const bLat = parseFloat(btn.dataset.lat);
+          btn.classList.toggle('active', Math.abs(bLat - latitudeDeg) < 0.5);
+        });
+      }
+
+      latSlider.addEventListener('input', (e) => {
+        setLatitude(e.target.value);
+      });
+
+      presetButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          setLatitude(btn.dataset.lat);
+        });
+      });
+
+      // Camera Preset Buttons
+      function setCameraMode(mode, btnActive) {
+        camera.mode = mode;
+        [btnCamPersp, btnCamTop, btnCamSide, btnCamFollow].forEach(b => b.classList.remove('active'));
+        if (btnActive) btnActive.classList.add('active');
+
+        if (mode === 'top') {
+          camera.azimuth = 0;
+          camera.elevation = Math.PI / 2 - 0.001;
+        } else if (mode === 'perspective') {
+          camera.azimuth = 0.85;
+          camera.elevation = 0.52;
+          camera.distance = 19.0;
+        } else if (mode === 'side') {
+          camera.elevation = 0.05;
+          camera.distance = 16.0;
+        }
+      }
+
+      btnCamPersp.addEventListener('click', () => setCameraMode('perspective', btnCamPersp));
+      btnCamTop.addEventListener('click', () => setCameraMode('top', btnCamTop));
+      btnCamSide.addEventListener('click', () => setCameraMode('side', btnCamSide));
+      btnCamFollow.addEventListener('click', () => setCameraMode('follow', btnCamFollow));
+
+      // Pause & Clear Actions
+      btnPause.addEventListener('click', () => {
+        isPaused = !isPaused;
+        btnPause.textContent = isPaused ? 'Resume' : 'Pause';
+        btnPause.classList.toggle('active', isPaused);
+      });
+
+      btnClearTrail.addEventListener('click', () => {
+        resetTrail();
+        // Reset fallen pins
+        pins.forEach(pin => {
+          pin.isKnocked = false;
+          pin.fallProgress = 0;
+        });
+      });
+
+      // Orbit Controls (Mouse & Touch)
+      container.addEventListener('mousedown', (e) => {
+        camera.isDragging = (e.button === 0);
+        camera.isPanning = (e.button === 2);
+        camera.lastMouseX = e.clientX;
+        camera.lastMouseY = e.clientY;
+        if (camera.mode !== 'perspective') {
+          camera.mode = 'perspective';
+          [btnCamPersp, btnCamTop, btnCamSide, btnCamFollow].forEach(b => b.classList.remove('active'));
+          btnCamPersp.classList.add('active');
+        }
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!camera.isDragging && !camera.isPanning) return;
+
+        const dx = e.clientX - camera.lastMouseX;
+        const dy = e.clientY - camera.lastMouseY;
+        camera.lastMouseX = e.clientX;
+        camera.lastMouseY = e.clientY;
+
+        if (camera.isDragging) {
+          camera.azimuth -= dx * 0.007;
+          camera.elevation = Math.max(0.04, Math.min(Math.PI / 2 - 0.04, camera.elevation + dy * 0.007));
+        } else if (camera.isPanning) {
+          camera.target.x -= dx * 0.015;
+          camera.target.z += dy * 0.015;
+        }
+      });
+
+      window.addEventListener('mouseup', () => {
+        camera.isDragging = false;
+        camera.isPanning = false;
+      });
+
+      container.addEventListener('contextmenu', e => e.preventDefault());
+
+      container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        camera.distance = Math.max(6.0, Math.min(36.0, camera.distance + e.deltaY * 0.015));
+      }, { passive: false });
+
+      // Touch Events for Mobile / Tablet Orbit
+      let touchStartDist = 0;
+      container.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          camera.isDragging = true;
+          camera.lastMouseX = e.touches[0].clientX;
+          camera.lastMouseY = e.touches[0].clientY;
+        } else if (e.touches.length === 2) {
+          touchStartDist = Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          );
+        }
+      }, { passive: true });
+
+      container.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1 && camera.isDragging) {
+          const dx = e.touches[0].clientX - camera.lastMouseX;
+          const dy = e.touches[0].clientY - camera.lastMouseY;
+          camera.lastMouseX = e.touches[0].clientX;
+          camera.lastMouseY = e.touches[0].clientY;
+
+          camera.azimuth -= dx * 0.007;
+          camera.elevation = Math.max(0.04, Math.min(Math.PI / 2 - 0.04, camera.elevation + dy * 0.007));
+        } else if (e.touches.length === 2) {
+          const currentDist = Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          );
+          const delta = touchStartDist - currentDist;
+          camera.distance = Math.max(6.0, Math.min(36.0, camera.distance + delta * 0.03));
+          touchStartDist = currentDist;
+        }
+      }, { passive: true });
+
+      container.addEventListener('touchend', () => {
+        camera.isDragging = false;
+      });
+
+      // Start Simulation
+      setLatitude(90.0);
+      requestAnimationFrame(render);
+
+    })();
+  </script>
+</body>
+</html>
