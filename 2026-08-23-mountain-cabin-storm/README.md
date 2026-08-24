@@ -1,5 +1,9 @@
 # 2026-08-23 Mountain Cabin Storm
 
+<p align="center">
+  <img src="hero.png" alt="Four PS2-style mountain cabin scenes from Ox Alpha Max, GPT-5.6 Sol xhigh, GPT-5.6 Luna Max, and Muse Spark 1.2 xhigh." width="100%">
+</p>
+
 One prompt, four models, one self-contained HTML file each.
 
 - Ox Alpha Max: [ox-alpha-max/index.html](ox-alpha-max/index.html)
