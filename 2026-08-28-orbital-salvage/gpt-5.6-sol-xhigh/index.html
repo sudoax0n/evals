@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Orbital Salvage</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body {
+      display: grid;
+      place-items: center;
+    }
+
+    #stage {
+      position: relative;
+      width: min(100vw, calc(100vh * 16 / 9));
+      aspect-ratio: 16 / 9;
+      max-height: 100vh;
+      overflow: hidden;
+      background: #010207;
+      isolation: isolate;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #grade,
+    #flare-wash {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    #grade {
+      z-index: 2;
+      background:
+        radial-gradient(ellipse at 50% 43%, transparent 43%, rgba(0, 3, 13, .18) 72%, rgba(0, 0, 5, .58) 115%),
+        repeating-linear-gradient(0deg, rgba(112, 150, 255, .014) 0, rgba(112, 150, 255, .014) 1px, transparent 1px, transparent 3px);
+      mix-blend-mode: screen;
+    }
+
+    #flare-wash {
+      z-index: 3;
+      opacity: 0;
+      background:
+        radial-gradient(circle at 27% 61%, rgba(255,255,242,1) 0, rgba(255,221,147,.9) 7%, rgba(105,172,255,.35) 24%, rgba(255,255,255,0) 58%),
+        rgba(238, 247, 255, .96);
+      mix-blend-mode: screen;
+      will-change: opacity;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage" aria-label="Autoplaying orbital salvage cinematic">
+    <div id="grade"></div>
+    <div id="flare-wash"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    const DURATION = 32;
+    const TAU = Math.PI * 2;
+    const stage = document.querySelector('#stage');
+    const flareWash = document.querySelector('#flare-wash');
+
+    // Fixed-seed generator: every star, cloud, spark, and debris shard is repeatable.
+    let seed = 0x5A17B1E5;
+    function random() {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed / 4294967296;
+    }
+    const clamp01 = v => Math.max(0, Math.min(1, v));
+    const smooth = v => {
+      v = clamp01(v);
+      return v * v * (3 - 2 * v);
+    };
+    const smoother = v => {
+      v = clamp01(v);
+      return v * v * v * (v * (v * 6 - 15) + 10);
+    };
+    const range = (t, a, b) => clamp01((t - a) / (b - a));
+    const pulse = (t, frequency = 1) => 0.5 + 0.5 * Math.sin(t * TAU * frequency);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(stage.clientWidth, stage.clientHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    stage.prepend(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x010207);
+    scene.fog = new THREE.FogExp2(0x01030a, 0.0011);
+
+    const camera = new THREE.PerspectiveCamera(45, 16 / 9, 0.12, 420);
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(stage.clientWidth, stage.clientHeight), 0.72, 0.55, 0.78);
+    composer.addPass(bloom);
+
+    const hemi = new THREE.HemisphereLight(0x8eb8ff, 0x07101e, 0.68);
+    scene.add(hemi);
+    const sunlight = new THREE.DirectionalLight(0xffe7bd, 4.2);
+    sunlight.position.set(-38, 18, -52);
+    sunlight.castShadow = true;
+    sunlight.shadow.mapSize.set(1024, 1024);
+    sunlight.shadow.camera.near = 1;
+    sunlight.shadow.camera.far = 90;
+    sunlight.shadow.camera.left = -22;
+    sunlight.shadow.camera.right = 22;
+    sunlight.shadow.camera.top = 22;
+    sunlight.shadow.camera.bottom = -22;
+    scene.add(sunlight);
+    const rimLight = new THREE.DirectionalLight(0x438cff, 1.35);
+    rimLight.position.set(22, -8, 28);
+    scene.add(rimLight);
+
+    function canvasTexture(width, height, painter, colorSpace = THREE.SRGBColorSpace) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      painter(ctx, width, height);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = colorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+      return texture;
+    }
+
+    function radialTexture(inner, mid, outer) {
+      return canvasTexture(128, 128, (ctx, w, h) => {
+        const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+        g.addColorStop(0, inner);
+        g.addColorStop(.19, mid);
+        g.addColorStop(1, outer);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, w, h);
+      });
+    }
+
+    function makeEarthMap() {
+      return canvasTexture(1024, 512, (ctx, w, h) => {
+        const ocean = ctx.createLinearGradient(0, 0, 0, h);
+        ocean.addColorStop(0, '#102b48');
+        ocean.addColorStop(.48, '#0a3554');
+        ocean.addColorStop(1, '#071a30');
+        ctx.fillStyle = ocean;
+        ctx.fillRect(0, 0, w, h);
+
+        // Layered seeded land blobs create a low-poly-era painted planet map.
+        const landColors = ['#334c3a', '#3e5540', '#5a6448', '#2d473b'];
+        for (let c = 0; c < 22; c++) {
+          const cx = random() * w;
+          const cy = h * (.18 + random() * .62);
+          const rx = 24 + random() * 92;
+          const ry = 12 + random() * 48;
+          const points = 8 + Math.floor(random() * 7);
+          ctx.beginPath();
+          for (let p = 0; p <= points; p++) {
+            const a = p / points * TAU;
+            const rough = .68 + random() * .58;
+            const x = cx + Math.cos(a) * rx * rough;
+            const y = cy + Math.sin(a) * ry * rough;
+            p === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = landColors[c % landColors.length];
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(168,174,118,.13)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        const night = ctx.createLinearGradient(0, 0, w, 0);
+        night.addColorStop(0, 'rgba(0,0,5,.18)');
+        night.addColorStop(.5, 'rgba(0,0,0,0)');
+        night.addColorStop(1, 'rgba(0,0,8,.22)');
+        ctx.fillStyle = night;
+        ctx.fillRect(0, 0, w, h);
+      });
+    }
+
+    function makeCloudMap() {
+      return canvasTexture(1024, 512, (ctx, w, h) => {
+        ctx.clearRect(0, 0, w, h);
+        for (let band = 0; band < 11; band++) {
+          const y = h * (.12 + band * .073) + (random() - .5) * 22;
+          const alpha = .09 + random() * .13;
+          ctx.fillStyle = `rgba(225,241,255,${alpha})`;
+          for (let i = 0; i < 34; i++) {
+            const x = random() * w;
+            const rx = 18 + random() * 75;
+            const ry = 2 + random() * 8;
+            ctx.beginPath();
+            ctx.ellipse(x, y + (random() - .5) * 15, rx, ry, (random() - .5) * .12, 0, TAU);
+            ctx.fill();
+          }
+        }
+      });
+    }
+
+    // Planet, cloud shell, and a Fresnel atmosphere. The camera never enters these shells.
+    const EARTH_RADIUS = 58;
+    const earthCenter = new THREE.Vector3(0, -67, -8);
+    const earth = new THREE.Mesh(
+      new THREE.SphereGeometry(EARTH_RADIUS, 72, 36),
+      new THREE.MeshStandardMaterial({ map: makeEarthMap(), roughness: .94, metalness: .02, color: 0xa8c8da })
+    );
+    earth.position.copy(earthCenter);
+    earth.rotation.set(0, -1.08, -.05);
+    earth.receiveShadow = true;
+    scene.add(earth);
+
+    const clouds = new THREE.Mesh(
+      new THREE.SphereGeometry(EARTH_RADIUS + .25, 64, 32),
+      new THREE.MeshLambertMaterial({ map: makeCloudMap(), transparent: true, opacity: .74, depthWrite: false })
+    );
+    clouds.position.copy(earthCenter);
+    clouds.rotation.copy(earth.rotation);
+    scene.add(clouds);
+
+    const atmosphere = new THREE.Mesh(
+      new THREE.SphereGeometry(EARTH_RADIUS + 1.05, 64, 32),
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+        vertexShader: `
+          varying vec3 vNormalW;
+          varying vec3 vWorld;
+          void main() {
+            vec4 world = modelMatrix * vec4(position, 1.0);
+            vWorld = world.xyz;
+            vNormalW = normalize(mat3(modelMatrix) * normal);
+            gl_Position = projectionMatrix * viewMatrix * world;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vNormalW;
+          varying vec3 vWorld;
+          void main() {
+            vec3 viewDir = normalize(cameraPosition - vWorld);
+            float rim = pow(1.0 - abs(dot(normalize(vNormalW), viewDir)), 3.1);
+            vec3 blue = mix(vec3(.05,.25,.92), vec3(.22,.72,1.0), rim);
+            gl_FragColor = vec4(blue, rim * .8);
+          }
+        `
+      })
+    );
+    atmosphere.position.copy(earthCenter);
+    scene.add(atmosphere);
+
+    // Star field.
+    const starCount = 1150;
+    const starPositions = new Float32Array(starCount * 3);
+    const starColors = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount; i++) {
+      const z = random() * 2 - 1;
+      const a = random() * TAU;
+      const r = 150 + random() * 100;
+      const q = Math.sqrt(1 - z * z);
+      starPositions[i * 3] = Math.cos(a) * q * r;
+      starPositions[i * 3 + 1] = z * r;
+      starPositions[i * 3 + 2] = Math.sin(a) * q * r;
+      const warm = random();
+      starColors[i * 3] = .62 + warm * .38;
+      starColors[i * 3 + 1] = .72 + warm * .24;
+      starColors[i * 3 + 2] = 1;
+    }
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+    const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({ size: .28, sizeAttenuation: true, vertexColors: true, transparent: true, opacity: .9, depthWrite: false }));
+    scene.add(stars);
+
+    // Procedural sun and restrained lens ghosts.
+    const sunTexture = radialTexture('rgba(255,255,255,1)', 'rgba(255,211,122,.82)', 'rgba(255,149,55,0)');
+    const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, color: 0xffdda3 }));
+    sun.position.set(-31, -29, -84);
+    sun.scale.set(17, 17, 1);
+    scene.add(sun);
+    const ghostTexture = radialTexture('rgba(180,220,255,.42)', 'rgba(76,145,255,.12)', 'rgba(30,80,255,0)');
+    const flareGhosts = [];
+    for (let i = 0; i < 3; i++) {
+      const ghost = new THREE.Sprite(new THREE.SpriteMaterial({ map: ghostTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: .12 - i * .025 }));
+      ghost.scale.set(2.8 + i * 1.7, 2.8 + i * 1.7, 1);
+      scene.add(ghost);
+      flareGhosts.push(ghost);
+    }
+
+    const materials = {
+      hull: new THREE.MeshStandardMaterial({ color: 0x7d858d, roughness: .38, metalness: .78 }),
+      hullDark: new THREE.MeshStandardMaterial({ color: 0x202832, roughness: .54, metalness: .72 }),
+      ceramic: new THREE.MeshStandardMaterial({ color: 0xc8c2aa, roughness: .62, metalness: .18 }),
+      dark: new THREE.MeshStandardMaterial({ color: 0x10141a, roughness: .72, metalness: .48 }),
+      gold: new THREE.MeshStandardMaterial({ color: 0x9a7131, roughness: .38, metalness: .76 }),
+      panel: new THREE.MeshStandardMaterial({ color: 0x102c56, roughness: .28, metalness: .48, emissive: 0x06122b, emissiveIntensity: .65 }),
+      panelLine: new THREE.MeshBasicMaterial({ color: 0x6a86a7 }),
+      glass: new THREE.MeshStandardMaterial({ color: 0x07111c, roughness: .12, metalness: .25, emissive: 0x082342, emissiveIntensity: .8 }),
+      red: new THREE.MeshStandardMaterial({ color: 0x411012, emissive: 0xff120a, emissiveIntensity: 4, roughness: .3 }),
+      green: new THREE.MeshStandardMaterial({ color: 0x123a26, emissive: 0x29ff91, emissiveIntensity: 4.5, roughness: .25 }),
+      cyan: new THREE.MeshStandardMaterial({ color: 0x173640, emissive: 0x35dfff, emissiveIntensity: 4, roughness: .25 })
+    };
+
+    function mesh(geometry, material, parent, position, rotation, scale) {
+      const object = new THREE.Mesh(geometry, material);
+      if (position) object.position.copy(position);
+      if (rotation) object.rotation.set(rotation.x, rotation.y, rotation.z);
+      if (scale) object.scale.copy(scale);
+      object.castShadow = true;
+      object.receiveShadow = true;
+      parent.add(object);
+      return object;
+    }
+
+    // Damaged communications satellite.
+    const satellite = new THREE.Group();
+    scene.add(satellite);
+    mesh(new THREE.BoxGeometry(3.8, 2.65, 2.55), materials.hull, satellite, new THREE.Vector3());
+    mesh(new THREE.BoxGeometry(3.25, 2.18, 2.72), materials.gold, satellite, new THREE.Vector3(0, 0, .01));
+    mesh(new THREE.BoxGeometry(3.68, .13, 2.78), materials.hullDark, satellite, new THREE.Vector3(0, 1.29, 0));
+    mesh(new THREE.CylinderGeometry(.95, 1.12, .72, 10), materials.hullDark, satellite, new THREE.Vector3(0, -1.65, -.1));
+    mesh(new THREE.CylinderGeometry(.25, .25, 2.4, 8), materials.hull, satellite, new THREE.Vector3(0, 2.1, -.2));
+    const dishProfile = [
+      new THREE.Vector2(.12, 0), new THREE.Vector2(.34, .025), new THREE.Vector2(.82, .14), new THREE.Vector2(1.55, .52)
+    ];
+    const dish = mesh(new THREE.LatheGeometry(dishProfile, 20), materials.ceramic, satellite, new THREE.Vector3(0, 2.62, -.2));
+    dish.material.side = THREE.DoubleSide;
+    mesh(new THREE.CylinderGeometry(.08, .08, 1.05, 8), materials.hullDark, satellite, new THREE.Vector3(0, 3.1, -.2));
+    mesh(new THREE.SphereGeometry(.18, 10, 8), materials.cyan, satellite, new THREE.Vector3(0, 3.64, -.2));
+
+    const solarPivots = [];
+    function buildSolarArray(side) {
+      const pivot = new THREE.Group();
+      pivot.position.set(side * 2.08, .15, 0);
+      satellite.add(pivot);
+      solarPivots.push(pivot);
+      mesh(new THREE.CylinderGeometry(.16, .16, .65, 8), materials.hull, pivot, new THREE.Vector3(side * .18, 0, 0), new THREE.Euler(0, 0, Math.PI / 2));
+      const wing = new THREE.Group();
+      pivot.add(wing);
+      for (let panel = 0; panel < 3; panel++) {
+        const x = side * (1.14 + panel * 2.17);
+        mesh(new THREE.BoxGeometry(2.02, 2.18, .11), materials.panel, wing, new THREE.Vector3(x, 0, 0));
+        for (let gx = -1; gx <= 1; gx++) {
+          mesh(new THREE.BoxGeometry(.026, 2.05, .125), materials.panelLine, wing, new THREE.Vector3(x + gx * .5, 0, 0));
+        }
+        mesh(new THREE.BoxGeometry(1.94, .026, .125), materials.panelLine, wing, new THREE.Vector3(x, 0, 0));
+      }
+      return pivot;
+    }
+    buildSolarArray(-1);
+    buildSolarArray(1);
+
+    // Coupler assembly stays visible throughout the mission.
+    const couplerLocal = new THREE.Vector3(.62, .38, 1.49);
+    const charPatch = mesh(new THREE.CircleGeometry(.69, 18), new THREE.MeshBasicMaterial({ color: 0x08090a, transparent: true, opacity: .82, side: THREE.DoubleSide }), satellite, new THREE.Vector3(.62, .38, 1.286));
+    charPatch.rotation.x = 0;
+    const couplerRing = mesh(new THREE.TorusGeometry(.5, .12, 8, 18), materials.hullDark, satellite, couplerLocal.clone());
+    const socketCore = mesh(new THREE.CylinderGeometry(.31, .31, .18, 10), materials.red, satellite, couplerLocal.clone().add(new THREE.Vector3(0, 0, .02)), new THREE.Euler(Math.PI / 2, 0, 0));
+    const crackedBrace = mesh(new THREE.BoxGeometry(.8, .09, .09), materials.dark, satellite, couplerLocal.clone().add(new THREE.Vector3(.03, .2, .11)), new THREE.Euler(0, 0, -.28));
+
+    const warningLights = [];
+    for (const p of [new THREE.Vector3(-1.28,.9,1.34), new THREE.Vector3(1.3,-.88,1.34), new THREE.Vector3(-1.35,-.88,-1.34)]) {
+      warningLights.push(mesh(new THREE.SphereGeometry(.105, 8, 6), materials.red.clone(), satellite, p));
+    }
+
+    // Service spacecraft with continuously animated clamps and thrusters.
+    const craft = new THREE.Group();
+    scene.add(craft);
+    mesh(new THREE.BoxGeometry(2.65, 1.65, 3.45), materials.ceramic, craft, new THREE.Vector3(0, 0, 0));
+    mesh(new THREE.BoxGeometry(2.82, .18, 2.75), materials.hullDark, craft, new THREE.Vector3(0, -.84, .18));
+    mesh(new THREE.CylinderGeometry(.82, 1.12, 1.45, 8), materials.hull, craft, new THREE.Vector3(0, .02, -2.22), new THREE.Euler(Math.PI / 2, 0, 0));
+    mesh(new THREE.BoxGeometry(1.72, .74, .11), materials.glass, craft, new THREE.Vector3(0, .45, -2.89), new THREE.Euler(-.18, 0, 0));
+    mesh(new THREE.CylinderGeometry(.42, .42, 2.2, 10), materials.hullDark, craft, new THREE.Vector3(-1.48, -.15, .3), new THREE.Euler(Math.PI / 2, 0, 0));
+    mesh(new THREE.CylinderGeometry(.42, .42, 2.2, 10), materials.hullDark, craft, new THREE.Vector3(1.48, -.15, .3), new THREE.Euler(Math.PI / 2, 0, 0));
+    mesh(new THREE.BoxGeometry(1.35, .18, 1.4), materials.hullDark, craft, new THREE.Vector3(0, -1.0, .35));
+    const navRed = mesh(new THREE.SphereGeometry(.09, 8, 6), materials.red, craft, new THREE.Vector3(-1.52, .35, -.2));
+    const navGreen = mesh(new THREE.SphereGeometry(.09, 8, 6), materials.green, craft, new THREE.Vector3(1.52, .35, -.2));
+
+    const plumeTexture = radialTexture('rgba(235,255,255,1)', 'rgba(74,179,255,.8)', 'rgba(17,89,255,0)');
+    const craftPlumes = [];
+    for (const x of [-.74, .74]) {
+      const plume = new THREE.Sprite(new THREE.SpriteMaterial({ map: plumeTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: .8, color: 0x76c9ff }));
+      plume.position.set(x, -.35, 2.15);
+      plume.scale.set(.62, 2.5, 1);
+      craft.add(plume);
+      craftPlumes.push(plume);
+      mesh(new THREE.CylinderGeometry(.19, .26, .32, 8), materials.dark, craft, new THREE.Vector3(x, -.35, 1.83), new THREE.Euler(Math.PI / 2, 0, 0));
+    }
+    const sidePlumes = [];
+    for (const side of [-1, 1]) {
+      const plume = new THREE.Sprite(new THREE.SpriteMaterial({ map: plumeTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0, color: 0x91dbff }));
+      plume.position.set(side * 1.76, .43, -.78);
+      plume.scale.set(.32, .95, 1);
+      craft.add(plume);
+      sidePlumes.push(plume);
+    }
+
+    function alignBetween(object, a, b) {
+      const delta = new THREE.Vector3().subVectors(b, a);
+      object.position.copy(a).add(b).multiplyScalar(.5);
+      object.scale.set(1, delta.length(), 1);
+      object.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+    }
+
+    const armSets = [];
+    for (const side of [-1, 1]) {
+      const root = new THREE.Group();
+      craft.add(root);
+      const upper = mesh(new THREE.CylinderGeometry(.09, .115, 1, 8), materials.hull, root);
+      const lower = mesh(new THREE.CylinderGeometry(.07, .09, 1, 8), materials.hullDark, root);
+      const elbow = mesh(new THREE.SphereGeometry(.17, 8, 6), materials.hull, root);
+      const clamp = mesh(new THREE.BoxGeometry(.5, .12, .38), materials.cyan.clone(), root);
+      armSets.push({ side, upper, lower, elbow, clamp });
+    }
+
+    // Repair drone and its visible manipulator.
+    const drone = new THREE.Group();
+    scene.add(drone);
+    mesh(new THREE.BoxGeometry(1.05, .52, .84), materials.hull, drone, new THREE.Vector3());
+    mesh(new THREE.BoxGeometry(.62, .3, .12), materials.glass, drone, new THREE.Vector3(0, .04, -.47));
+    for (const x of [-.55, .55]) {
+      for (const y of [-.31, .31]) {
+        mesh(new THREE.SphereGeometry(.13, 8, 6), materials.hullDark, drone, new THREE.Vector3(x, y, .18));
+      }
+    }
+    const droneBeacon = mesh(new THREE.SphereGeometry(.08, 8, 6), materials.cyan, drone, new THREE.Vector3(0, .34, .1));
+    const dronePlume = new THREE.Sprite(new THREE.SpriteMaterial({ map: plumeTexture, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: .7, color: 0x65c9ff }));
+    dronePlume.position.set(0, 0, .68);
+    dronePlume.scale.set(.4, 1.2, 1);
+    drone.add(dronePlume);
+
+    const toolUpper = mesh(new THREE.CylinderGeometry(.035, .05, 1, 7), materials.hull, scene);
+    const toolLower = mesh(new THREE.CylinderGeometry(.028, .04, 1, 7), materials.hullDark, scene);
+    const toolTip = mesh(new THREE.SphereGeometry(.09, 8, 6), materials.cyan, scene);
+
+    // Broken and replacement couplers are persistent meshes, not camera-shot substitutes.
+    const brokenPart = mesh(new THREE.BoxGeometry(.48, .42, .25), new THREE.MeshStandardMaterial({ color: 0x17191b, roughness: .9, metalness: .45, emissive: 0x310000, emissiveIntensity: 1.4 }), scene);
+    const replacement = mesh(new THREE.CylinderGeometry(.29, .29, .32, 10), materials.green.clone(), scene, undefined, new THREE.Euler(Math.PI / 2, 0, 0));
+    const replacementLight = new THREE.PointLight(0x36ff9e, 0, 3.2, 2);
+    scene.add(replacementLight);
+
+    // Deterministic electrical sparks in world space.
+    const sparkCount = 42;
+    const sparkData = [];
+    const sparkPositions = new Float32Array(sparkCount * 3);
+    for (let i = 0; i < sparkCount; i++) {
+      const v = new THREE.Vector3((random() - .5) * 1.2, (random() - .5) * 1.2, .25 + random() * 1.2);
+      sparkData.push({ velocity: v, delay: random(), life: .18 + random() * .42 });
+    }
+    const sparkGeometry = new THREE.BufferGeometry();
+    sparkGeometry.setAttribute('position', new THREE.BufferAttribute(sparkPositions, 3));
+    const sparkMaterial = new THREE.PointsMaterial({ color: 0x88dfff, size: .11, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+    const sparks = new THREE.Points(sparkGeometry, sparkMaterial);
+    scene.add(sparks);
+
+    // Restrained procedural debris, including two foreground pieces for the opening shot.
+    const debris = [];
+    const debrisMaterial = new THREE.MeshStandardMaterial({ color: 0x4e5660, roughness: .65, metalness: .7 });
+    for (let i = 0; i < 15; i++) {
+      const shard = mesh(
+        i % 3 === 0 ? new THREE.TetrahedronGeometry(.18 + random() * .38, 0) : new THREE.BoxGeometry(.15 + random() * .55, .06 + random() * .15, .18 + random() * .6),
+        debrisMaterial,
+        scene
+      );
+      const initial = new THREE.Vector3((random() - .5) * 48, -5 + random() * 19, -18 + random() * 48);
+      if (i === 0) initial.set(-8.4, 1.0, 18.4);
+      if (i === 1) initial.set(-4.8, -1.1, 12.6);
+      shard.position.copy(initial);
+      debris.push({
+        mesh: shard,
+        initial,
+        velocity: new THREE.Vector3((random() - .5) * .18, (random() - .5) * .09, -.08 - random() * .18),
+        spin: new THREE.Vector3((random() - .5) * 1.4, (random() - .5) * 1.4, (random() - .5) * 1.4)
+      });
+    }
+
+    const satellitePosition = new THREE.Vector3();
+    const satelliteQuaternion = new THREE.Quaternion();
+    const stableQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(.08, -.19, .04));
+    const tmpA = new THREE.Vector3();
+    const tmpB = new THREE.Vector3();
+    const tmpC = new THREE.Vector3();
+    const tmpQ = new THREE.Quaternion();
+    const tmpQ2 = new THREE.Quaternion();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+
+    function localToWorld(local, target = new THREE.Vector3()) {
+      return target.copy(local).applyQuaternion(satelliteQuaternion).add(satellitePosition);
+    }
+
+    function satelliteTumbleAt(t, target) {
+      const moving = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        .34 * Math.sin(t * .53) + t * .105,
+        t * .19,
+        .22 * Math.sin(t * .71) + t * .075,
+        'YXZ'
+      ));
+      const settle = smoother(range(t, 20.15, 22.65));
+      return target.copy(moving).slerp(stableQuaternion, settle);
+    }
+
+    function craftLocalAt(t, target) {
+      const p0 = new THREE.Vector3(13.8, -1.9, 16.2);
+      const p1 = new THREE.Vector3(9.1, -1.15, 11.2);
+      const p2 = new THREE.Vector3(2.7, -.52, 6.8);
+      const dock = new THREE.Vector3(0, -.18, 4.56);
+      if (t < 5) return target.lerpVectors(p0, p1, smooth(t / 5));
+      if (t < 10.2) return target.lerpVectors(p1, p2, smoother((t - 5) / 5.2));
+      if (t < 13.45) return target.lerpVectors(p2, dock, 1 - Math.pow(1 - range(t, 10.2, 13.45), 3));
+      return target.copy(dock);
+    }
+
+    function droneLocalAt(t, target) {
+      const bay = new THREE.Vector3(0, -1.24, 4.62);
+      const clear = new THREE.Vector3(1.15, -1.0, 3.72);
+      const stagePoint = new THREE.Vector3(1.8, .25, 2.75);
+      const work = new THREE.Vector3(1.18, .58, 2.28);
+      if (t < 14.45) {
+        const travelingCraft = craftLocalAt(t, new THREE.Vector3());
+        return target.copy(travelingCraft).add(new THREE.Vector3(0, -1.06, .06));
+      }
+      if (t < 15.3) return target.lerpVectors(bay, clear, smoother(range(t, 14.45, 15.3)));
+      if (t < 16.45) return target.lerpVectors(clear, stagePoint, smoother(range(t, 15.3, 16.45)));
+      if (t < 17.25) return target.lerpVectors(stagePoint, work, smoother(range(t, 16.45, 17.25)));
+      if (t < 20.55) {
+        target.copy(work);
+        target.y += Math.sin(t * 5.1) * .025;
+        return target;
+      }
+      if (t < 21.15) return target.lerpVectors(work, stagePoint, smoother(range(t, 20.55, 21.15)));
+      if (t < 21.72) return target.lerpVectors(stagePoint, clear, smoother(range(t, 21.15, 21.72)));
+      if (t < 22.22) return target.lerpVectors(clear, bay, smoother(range(t, 21.72, 22.22)));
+      return target.copy(bay);
+    }
+
+    function updateSatellite(t) {
+      // A small periodic orbital drift makes the repaired vehicle cross the horizon in the final shot.
+      const phase = t / DURATION * TAU;
+      satellitePosition.set(2.25 * Math.sin(phase), 1.15 + .35 * Math.sin(phase * 2), .45 * Math.cos(phase));
+      satelliteTumbleAt(t, satelliteQuaternion);
+      satellite.position.copy(satellitePosition);
+      satellite.quaternion.copy(satelliteQuaternion);
+
+      const deploy = smoother(range(t, 21.7, 26.2));
+      solarPivots[0].rotation.y = (1 - deploy) * .98;
+      solarPivots[0].rotation.z = (1 - deploy) * -.15;
+      solarPivots[1].rotation.y = (1 - deploy) * -1.16;
+      solarPivots[1].rotation.z = (1 - deploy) * .24;
+
+      const repaired = range(t, 19.95, 20.2);
+      warningLights.forEach((light, i) => {
+        const isGreen = repaired > .5;
+        light.material.color.setHex(isGreen ? 0x123a26 : 0x411012);
+        light.material.emissive.setHex(isGreen ? 0x29ff91 : 0xff120a);
+        light.material.emissiveIntensity = isGreen ? 3.6 : (pulse(t * 1.8 + i * .17) > .55 ? 4.5 : .2);
+      });
+      socketCore.material = repaired > .5 ? materials.green : materials.red;
+      crackedBrace.visible = repaired < .98;
+    }
+
+    function updateCraft(t) {
+      const craftLocal = craftLocalAt(t, tmpA);
+      localToWorld(craftLocal, craft.position);
+      const match = smoother(range(t, 7.6, 12.2));
+      const relative = tmpQ.setFromEuler(new THREE.Euler(.16 * (1 - match), -.33 * (1 - match), .24 * (1 - match)));
+      craft.quaternion.copy(satelliteQuaternion).multiply(relative);
+
+      const lock = smoother(range(t, 10.45, 13.35));
+      for (const arm of armSets) {
+        const side = arm.side;
+        const base = new THREE.Vector3(side * .84, -.16, -1.55);
+        const foldedElbow = new THREE.Vector3(side * 1.22, -.55, -1.62);
+        const extendedElbow = new THREE.Vector3(side * 1.15, .02, -2.28);
+        const foldedTip = new THREE.Vector3(side * .72, -.74, -1.28);
+        const extendedTip = new THREE.Vector3(side * 1.02, .12, -3.08);
+        const elbow = new THREE.Vector3().lerpVectors(foldedElbow, extendedElbow, lock);
+        const tip = new THREE.Vector3().lerpVectors(foldedTip, extendedTip, lock);
+        alignBetween(arm.upper, base, elbow);
+        alignBetween(arm.lower, elbow, tip);
+        arm.elbow.position.copy(elbow);
+        arm.clamp.position.copy(tip);
+        arm.clamp.rotation.y = (1 - lock) * side * .8;
+        arm.clamp.material.emissiveIntensity = lock > .92 ? 4.2 : .65 + pulse(t * 2) * .8;
+      }
+
+      let thrust = 0;
+      if (t < 4.8) thrust = .62 + .38 * pulse(t, 3.2);
+      else if (t < 9.8) thrust = Math.max(.08, Math.sin(t * 6.1) * .62);
+      else if (t < 12.5) thrust = Math.max(0, Math.sin(t * 8.4)) * .48;
+      craftPlumes.forEach((plume, i) => {
+        plume.material.opacity = thrust * (.72 + .28 * pulse(t * 2 + i * .2, 1));
+        plume.scale.y = .7 + thrust * 2.25;
+      });
+      const sideThrust = t > 7.4 && t < 12.6 ? Math.max(0, Math.sin(t * 7.3)) * .64 : 0;
+      sidePlumes.forEach((plume, i) => {
+        plume.material.opacity = sideThrust * (i ? .72 : .5);
+        plume.scale.x = .22 + sideThrust * .28;
+      });
+      navRed.material.emissiveIntensity = pulse(t, 1.4) > .4 ? 4 : .2;
+      navGreen.material.emissiveIntensity = pulse(t + .35, 1.4) > .4 ? 4 : .2;
+    }
+
+    function updateDroneAndRepair(t) {
+      const droneLocal = droneLocalAt(t, tmpA);
+      localToWorld(droneLocal, drone.position);
+      const droneTilt = tmpQ.setFromEuler(new THREE.Euler(.05 * Math.sin(t * 3), 0, -.11 * Math.sin(t * 2.1)));
+      drone.quaternion.copy(satelliteQuaternion).multiply(droneTilt);
+      const traveling = (t > 14.45 && t < 17.2) || (t > 20.5 && t < 22.2);
+      dronePlume.material.opacity = traveling ? .35 + .55 * pulse(t, 4.3) : .04;
+      dronePlume.scale.y = traveling ? .7 + pulse(t, 3.7) * .8 : .25;
+      droneBeacon.material.emissiveIntensity = 2.4 + pulse(t, 2.4) * 2.2;
+
+      const socket = localToWorld(couplerLocal, tmpB);
+      const droneBaseLocal = droneLocal.clone().add(new THREE.Vector3(-.2, -.03, -.43));
+      const droneBase = localToWorld(droneBaseLocal, tmpC);
+      const toolAmount = smooth(range(t, 16.8, 17.55)) * (1 - smooth(range(t, 20.15, 20.55)));
+      const tip = new THREE.Vector3().lerpVectors(droneBase, socket, toolAmount * .88);
+      const elbow = new THREE.Vector3().lerpVectors(droneBase, tip, .48).add(new THREE.Vector3(0, .18, .08).applyQuaternion(satelliteQuaternion));
+      alignBetween(toolUpper, droneBase, elbow);
+      alignBetween(toolLower, elbow, tip);
+      toolTip.position.copy(tip);
+      toolUpper.visible = toolLower.visible = toolTip.visible = toolAmount > .02;
+
+      // Broken part: socket -> manipulator salvage cradle.
+      const brokenMove = smoother(range(t, 17.75, 18.65));
+      const brokenAtDrone = droneLocal.clone().add(new THREE.Vector3(.46, -.04, -.18));
+      const brokenLocal = new THREE.Vector3().lerpVectors(couplerLocal.clone().add(new THREE.Vector3(0, 0, .18)), brokenAtDrone, brokenMove);
+      localToWorld(brokenLocal, brokenPart.position);
+      brokenPart.quaternion.copy(satelliteQuaternion).multiply(tmpQ2.setFromEuler(new THREE.Euler(0, 0, brokenMove * .45)));
+
+      // New part: drone storage rail -> damaged socket.
+      const newAtDrone = droneLocal.clone().add(new THREE.Vector3(-.43, -.03, -.15));
+      const install = smoother(range(t, 18.9, 20.05));
+      const newLocal = new THREE.Vector3().lerpVectors(newAtDrone, couplerLocal.clone().add(new THREE.Vector3(0, 0, .19)), install);
+      localToWorld(newLocal, replacement.position);
+      replacement.quaternion.copy(satelliteQuaternion).multiply(tmpQ2.setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)));
+      replacement.material.emissiveIntensity = .65 + install * 5.2;
+      replacementLight.position.copy(replacement.position);
+      replacementLight.intensity = install * 2.8;
+
+      // Sparks recur deterministically until the replacement seats, then stop completely.
+      const sparkOn = t < 20.03;
+      sparkMaterial.opacity = sparkOn ? (.48 + .52 * pulse(t, 8.5)) : 0;
+      for (let i = 0; i < sparkCount; i++) {
+        const data = sparkData[i];
+        const age = ((t * 2.15 + data.delay) % 1) * data.life;
+        const local = couplerLocal.clone().addScaledVector(data.velocity, age);
+        local.y -= age * age * 1.8;
+        const world = localToWorld(local, new THREE.Vector3());
+        sparkPositions[i * 3] = world.x;
+        sparkPositions[i * 3 + 1] = world.y;
+        sparkPositions[i * 3 + 2] = world.z;
+      }
+      sparkGeometry.attributes.position.needsUpdate = true;
+    }
+
+    function updateDebris(t) {
+      debris.forEach((item, i) => {
+        item.mesh.position.copy(item.initial).addScaledVector(item.velocity, t);
+        item.mesh.rotation.set(item.spin.x * t + i, item.spin.y * t + i * .3, item.spin.z * t);
+      });
+    }
+
+    function setCameraPose(position, target, roll = 0, fov = 45) {
+      camera.position.copy(position);
+      camera.up.set(Math.sin(roll), Math.cos(roll), 0);
+      camera.lookAt(target);
+      camera.fov = fov;
+      camera.updateProjectionMatrix();
+    }
+
+    function cameraLocalPose(localPosition, localTarget, roll = 0, fov = 45) {
+      const position = localToWorld(localPosition, new THREE.Vector3());
+      const target = localToWorld(localTarget, new THREE.Vector3());
+      setCameraPose(position, target, roll, fov);
+    }
+
+    function updateCamera(t) {
+      if (t < 5) {
+        // Shot 1 — debris-level approach.
+        const p = smoother(t / 5);
+        const pos = new THREE.Vector3().lerpVectors(new THREE.Vector3(-10.6, 1.6, 23.2), new THREE.Vector3(-7.2, 2.4, 17.7), p).add(satellitePosition);
+        const craftLocal = craftLocalAt(t, new THREE.Vector3());
+        const focusLocal = craftLocal.clone().lerp(new THREE.Vector3(0, 0, 0), .46 + .22 * p);
+        const focus = localToWorld(focusLocal, new THREE.Vector3());
+        setCameraPose(pos, focus, -.025, 48);
+      } else if (t < 10) {
+        // Shot 2 — side tracking, pacing the braking craft and the target together.
+        const p = smooth(range(t, 5, 10));
+        const craftLocal = craftLocalAt(t, new THREE.Vector3());
+        const focusLocal = craftLocal.clone().multiplyScalar(.48);
+        const pos = new THREE.Vector3(17.5 - p * 3.8, 5.2 + p * .5, 9.5 - p * 1.5).add(satellitePosition);
+        setCameraPose(pos, localToWorld(focusLocal, new THREE.Vector3()), .015, 45);
+      } else if (t < 14.5) {
+        // Shot 3 — close docking shot in the satellite's rotating frame.
+        const p = smoother(range(t, 10, 14.5));
+        cameraLocalPose(
+          new THREE.Vector3(-5.75 + p * .45, 5.45 - p * .15, 7.75 - p * .35),
+          new THREE.Vector3(.05, .02, 2.35),
+          -.035,
+          42
+        );
+      } else if (t < 22) {
+        // Shot 4 — repair-drone close-up; camera rides the same tumble for coherence.
+        const p = smooth(range(t, 14.5, 22));
+        const droneLocal = droneLocalAt(t, new THREE.Vector3());
+        const focus = new THREE.Vector3().lerpVectors(droneLocal, couplerLocal, .58 + .18 * Math.sin(p * Math.PI));
+        cameraLocalPose(new THREE.Vector3(3.25 - p * .2, 7.05 + p * .15, 5.55 - p * .2), focus, .03, 39);
+      } else if (t < 27.5) {
+        // Shot 5 — orbital camera move around both unfolding arrays.
+        const p = smoother(range(t, 22, 27.5));
+        const angle = .18 + p * 1.42;
+        const pos = new THREE.Vector3(Math.sin(angle) * 12.6, 4.8 + Math.sin(p * Math.PI) * 1.5, Math.cos(angle) * 12.6).add(satellitePosition);
+        setCameraPose(pos, satellitePosition.clone().add(new THREE.Vector3(0, .2, 0)), -.02 + p * .035, 46);
+      } else {
+        // Shot 6 — wide pullback, with camera composition carrying the satellite across sunrise.
+        const p = smoother(range(t, 27.5, 32));
+        const pos = new THREE.Vector3().lerpVectors(new THREE.Vector3(13.2, 6.7, 17.8), new THREE.Vector3(25.5, 12.8, 34.5), p).add(satellitePosition);
+        const compositionOffset = new THREE.Vector3(2.6 - p * 5.8, -.7 + p * .4, 0);
+        setCameraPose(pos, satellitePosition.clone().add(compositionOffset), -.025 + p * .055, 46 + p * 7);
+      }
+    }
+
+    function updateEnvironment(t) {
+      clouds.rotation.y = -1.05 + t * .0075;
+      clouds.rotation.z = -.05 + Math.sin(t / DURATION * TAU) * .012;
+      earth.rotation.y = -1.08 + t * .0014;
+      stars.rotation.y = t * .0008;
+      sun.material.opacity = .76 + pulse(t, .18) * .12;
+
+      // Lens ghosts are placed along the camera-to-sun line in world space.
+      for (let i = 0; i < flareGhosts.length; i++) {
+        const alpha = .23 + i * .17;
+        flareGhosts[i].position.lerpVectors(sun.position, camera.position, alpha);
+        flareGhosts[i].material.opacity = (.065 + i * .018) * (t > 27.5 ? 1.7 : 1);
+      }
+
+      // A matched flare at both ends masks the repaired-to-damaged state reset cleanly.
+      const endFlash = smooth(range(t, 31.15, 31.98));
+      const startFlash = 1 - smooth(range(t, 0, .46));
+      flareWash.style.opacity = String(Math.max(endFlash, startFlash) * .98);
+      renderer.toneMappingExposure = 1.06 + Math.max(endFlash, startFlash) * .42;
+    }
+
+    function resize() {
+      const width = Math.max(1, stage.clientWidth);
+      const height = Math.max(1, stage.clientHeight);
+      renderer.setSize(width, height, false);
+      composer.setSize(width, height);
+      camera.aspect = 16 / 9;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', resize, { passive: true });
+    resize();
+
+    const startTime = performance.now();
+    function animate(now) {
+      requestAnimationFrame(animate);
+      const t = ((now - startTime) / 1000) % DURATION;
+      updateSatellite(t);
+      updateCraft(t);
+      updateDroneAndRepair(t);
+      updateDebris(t);
+      updateCamera(t);
+      updateEnvironment(t);
+      composer.render();
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

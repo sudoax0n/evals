@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Orbital Salvage – PS2 Cinematic</title>
+<script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#02050d}
+  body{display:flex;align-items:center;justify-content:center;background:radial-gradient(120% 120% at 50% 85%, #0b1a33 0%, #040812 45%, #010205 100%)}
+  canvas{display:block;outline:none;box-shadow:0 0 0 1px rgba(80,120,180,.08), 0 20px 80px rgba(0,0,0,.9)}
+  #frame{position:relative;display:flex;align-items:center;justify-content:center;width:100vw;height:100vh;overflow:hidden}
+  #c{width:min(100vw, calc(100vh * 16 / 9));height:min(calc(100vw * 9 / 16), 100vh);aspect-ratio:16/9;max-width:100vw;max-height:100vh}
+  #vignette{position:absolute;inset:0;pointer-events:none;background:
+    radial-gradient(120% 75% at 50% 50%, transparent 62%, rgba(0,0,0,.55) 100%),
+    linear-gradient(to bottom, rgba(0,0,0,.18), transparent 22%, transparent 78%, rgba(0,0,0,.45) 100%);}
+  #grain{position:absolute;inset:0;pointer-events:none;opacity:.07;mix-blend-mode:soft-light;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.95' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");}
+</style>
+</head>
+<body>
+<div id="frame">
+  <canvas id="c"></canvas>
+  <div id="vignette"></div>
+  <div id="grain"></div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// --- deterministic RNG ---
+function mulberry32(a){ return function(){ let t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,61|t); return ((t^t>>>14)>>>0)/4294967296; } }
+const rng = mulberry32(0x2A1B3C4D);
+const R = ()=>rng();
+const Rr = (a,b)=>a+(b-a)*R();
+
+// helper
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const smoothstep=(t)=>t*t*(3-2*t);
+const easeOutCubic=(t)=>1-Math.pow(1-t,3);
+const easeInOutCubic=(t)=>t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+
+const DURATION=32;
+
+// --- renderer / scene ---
+const canvas=document.getElementById('c');
+const renderer=new THREE.WebGLRenderer({canvas, antialias:true, powerPreference:'high-performance', alpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.12;
+renderer.outputColorSpace=THREE.SRGBColorSpace;
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x02050d);
+scene.fog=new THREE.Fog(0x02050d, 45, 120);
+
+const camera=new THREE.PerspectiveCamera(44, 16/9, 0.1, 3000);
+let composer, bloomPass;
+let useComposer=true;
+try{
+  const rt=new THREE.Vector2();
+  composer=new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene,camera));
+  bloomPass=new UnrealBloomPass(new THREE.Vector2(1920,1080), 0.58, 0.45, 0.62);
+  composer.addPass(bloomPass);
+}catch(e){ useComposer=false; }
+
+
+// --- lights ---
+const ambient=new THREE.AmbientLight(0x8ea0c8, .35);
+scene.add(ambient);
+const hemi=new THREE.HemisphereLight(0x6a8bd5, 0x04060a, .45);
+scene.add(hemi);
+// sun low on horizon for sunrise
+const sunPos=new THREE.Vector3(280, 22, -140);
+const sunLight=new THREE.DirectionalLight(0xfff2d6, 2.6);
+sunLight.position.copy(sunPos);
+scene.add(sunLight);
+const sunFill=new THREE.DirectionalLight(0x8fb6ff, .55);
+sunFill.position.set(-80, 40, 80);
+scene.add(sunFill);
+const rimLight=new THREE.PointLight(0x6ec6ff, 6, 40);
+rimLight.position.set(0, -12, 6);
+scene.add(rimLight);
+
+// --- stars ---
+{
+  const g=new THREE.BufferGeometry();
+  const N=5200;
+  const pos=new Float32Array(N*3);
+  const col=new Float32Array(N*3);
+  const sz=new Float32Array(N);
+  for(let i=0;i<N;i++){
+    // uniform sphere shell
+    const u=R(), v=R(), theta=2*Math.PI*u, phi=Math.acos(2*v-1);
+    const r= 420 + Rr(0,380);
+    pos[i*3]= r*Math.sin(phi)*Math.cos(theta);
+    pos[i*3+1]= r*Math.sin(phi)*Math.sin(theta)*0.9 + Rr(-30,30);
+    pos[i*3+2]= r*Math.cos(phi);
+    const c=R();
+    if(c>0.92){ col[i*3]=1; col[i*3+1]=0.92; col[i*3+2]=0.75; }
+    else if(c>0.6){ col[i*3]=0.78; col[i*3+1]=0.85; col[i*3+2]=1;}
+    else { col[i*3]=0.66; col[i*3+1]=0.74; col[i*3+2]=0.98; }
+    sz[i]= Rr(0.3,1.35) * (c>0.94?1.6:1);
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color', new THREE.BufferAttribute(col,3));
+  g.setAttribute('size', new THREE.BufferAttribute(sz,1));
+  const m=new THREE.PointsMaterial({size:0.9, vertexColors:true, transparent:true, opacity:0.92, sizeAttenuation:true, blending:THREE.AdditiveBlending, depthWrite:false});
+  const pts=new THREE.Points(g,m);
+  scene.add(pts);
+}
+
+// --- procedural textures ---
+function createEarthTexture(){
+  const c=document.createElement('canvas'); c.width=1024; c.height=512;
+  const ctx=c.getContext('2d');
+  // ocean base
+  const grad=ctx.createLinearGradient(0,0,0,512);
+  grad.addColorStop(0,'#0a2e55');
+  grad.addColorStop(0.5,'#0d3a68');
+  grad.addColorStop(1,'#08233f');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,1024,512);
+  // continents noise blobs
+  ctx.fillStyle='#1e5a2a';
+  function blob(nx,ny,scale,alpha){
+    ctx.globalAlpha=alpha;
+    ctx.beginPath();
+    const pts=8+Math.floor(R()*5);
+    for(let i=0;i<pts;i++){
+      const a=i/pts*Math.PI*2;
+      const r=scale*(0.6+R()*0.8);
+      const x=nx + Math.cos(a)*r;
+      const y=ny + Math.sin(a)*r*0.65;
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+  const continentColor=['#2a6b32','#2f6f35','#245a2b','#3a7a3a'];
+  for(let i=0;i<28;i++){
+    const x=R()*1024, y= 60+R()*380;
+    const s= 28+R()*62;
+    ctx.fillStyle=continentColor[Math.floor(R()*continentColor.length)];
+    blob(x,y,s, 0.95);
+    // coastal highlight
+    ctx.fillStyle='#4a9a5b';
+    blob(x+4,y+2,s*0.55,0.35);
+  }
+  // ice caps
+  ctx.fillStyle='#e8f0ff';
+  ctx.globalAlpha=0.92;
+  ctx.fillRect(0,0,1024,18);
+  ctx.fillRect(0,494,1024,18);
+  ctx.globalAlpha=1;
+  // subtle latitude bands
+  ctx.strokeStyle='rgba(255,255,255,0.04)';
+  for(let y=0;y<512;y+=32){ ctx.beginPath(); ctx.moveTo(0,y+Math.sin(y*0.02)*6); for(let x=0;x<1024;x+=8) ctx.lineTo(x, y+Math.sin(x*0.015+y*0.01)*4); ctx.stroke(); }
+  // terminator darkening
+  const grad2=ctx.createLinearGradient(0,0,1024,0);
+  grad2.addColorStop(0,'rgba(0,6,20,0.0)');
+  grad2.addColorStop(0.55,'rgba(0,6,20,0.0)');
+  grad2.addColorStop(0.78,'rgba(0,8,28,0.55)');
+  grad2.addColorStop(1,'rgba(0,4,18,0.88)');
+  ctx.fillStyle=grad2; ctx.fillRect(0,0,1024,512);
+  const tex=new THREE.CanvasTexture(c);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.wrapS=THREE.RepeatWrapping;
+  return tex;
+}
+function createCloudTexture(){
+  const c=document.createElement('canvas'); c.width=1024; c.height=512;
+  const ctx=c.getContext('2d');
+  ctx.clearRect(0,0,1024,512);
+  for(let i=0;i<180;i++){
+    const x=R()*1024, y=R()*512;
+    const rx= 18+R()*42, ry= 8+R()*14;
+    const a=0.09+R()*0.17;
+    ctx.fillStyle=`rgba(255,255,255,${a})`;
+    ctx.beginPath();
+    ctx.ellipse(x,y,rx,ry, R()*0.3, 0, Math.PI*2);
+    ctx.fill();
+    // second puff
+    ctx.beginPath();
+    ctx.ellipse(x+Rr(-12,12), y+Rr(-6,6), rx*0.7, ry*0.7, 0,0,Math.PI*2);
+    ctx.fill();
+  }
+  // bands
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  ctx.lineWidth=2;
+  for(let y=60;y<452;y+=38){
+    ctx.beginPath();
+    for(let x=0;x<1024;x+=12){
+      const yy=y+ Math.sin(x*0.012 + y*0.04)*10 + Rr(-2,2);
+      if(x===0) ctx.moveTo(x,yy); else ctx.lineTo(x,yy);
+    }
+    ctx.stroke();
+  }
+  const tex=new THREE.CanvasTexture(c);
+  return tex;
+}
+const earthTex=createEarthTexture();
+const cloudTex=createCloudTexture();
+
+// --- Earth + atmosphere + clouds ---
+const earthGroup=new THREE.Group();
+scene.add(earthGroup);
+const EARTH_R=190;
+const earthGeo=new THREE.SphereGeometry(EARTH_R, 72, 72);
+const earthMat=new THREE.MeshPhongMaterial({map:earthTex, bumpScale:0.15, shininess:12, specular: new THREE.Color(0x9ab7ff), emissive:new THREE.Color(0x000a1a), emissiveIntensity:0.08});
+const earthMesh=new THREE.Mesh(earthGeo, earthMat);
+earthMesh.position.set(0, -EARTH_R - 6.2, -18);
+earthMesh.rotation.y=0.35;
+earthGroup.add(earthMesh);
+
+// thin blue atmosphere via shader
+const atmoGeo=new THREE.SphereGeometry(EARTH_R*1.015, 64,64);
+const atmoMat=new THREE.ShaderMaterial({
+  side:THREE.BackSide, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+  uniforms:{
+    time:{value:0},
+    sunDir:{value: sunPos.clone().normalize() }
+  },
+  vertexShader:`
+    varying vec3 vNormal;
+    varying vec3 vPos;
+    void main(){
+      vNormal=normalize(normalMatrix*normal);
+      vPos=position;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);
+    }
+  `,
+  fragmentShader:`
+    varying vec3 vNormal;
+    varying vec3 vPos;
+    uniform vec3 sunDir;
+    void main(){
+      float fres=pow(1.0 - max(0.0, dot(vNormal, vec3(0.,0.,1.))), 3.0);
+      // sunrise boost near horizon sun direction
+      float sunBoost=pow(max(0.0, dot(normalize(vPos), sunDir))*0.5+0.5, 8.0);
+      vec3 col=mix(vec3(0.12,0.42,0.95), vec3(1.0,0.55,0.22), sunBoost*0.65);
+      float alpha= fres*0.62 + sunBoost*0.22;
+      // horizon line thin
+      alpha*=1.1;
+      gl_FragColor=vec4(col, alpha);
+    }
+  `
+});
+const atmoMesh=new THREE.Mesh(atmoGeo, atmoMat);
+atmoMesh.position.copy(earthMesh.position);
+earthGroup.add(atmoMesh);
+
+// inner glow rim
+const glowGeo=new THREE.SphereGeometry(EARTH_R*1.028, 64,64);
+const glowMat=new THREE.MeshBasicMaterial({color:0x4da0ff, transparent:true, opacity:0.07, side:THREE.BackSide, blending:THREE.AdditiveBlending, depthWrite:false});
+const glowMesh=new THREE.Mesh(glowGeo, glowMat);
+glowMesh.position.copy(earthMesh.position);
+earthGroup.add(glowMesh);
+
+const cloudGeo=new THREE.SphereGeometry(EARTH_R*1.018, 64,64);
+const cloudMat=new THREE.MeshLambertMaterial({map:cloudTex, transparent:true, opacity:0.42, depthWrite:false});
+const cloudMesh=new THREE.Mesh(cloudGeo, cloudMat);
+cloudMesh.position.copy(earthMesh.position);
+earthGroup.add(cloudMesh);
+
+// sunrise sun disc + lens flare sprite
+{
+  const sunGeo=new THREE.SphereGeometry(9, 24,24);
+  const sunMat=new THREE.MeshBasicMaterial({color:0xfff4cc, transparent:true, opacity:0.98});
+  const sunMesh=new THREE.Mesh(sunGeo, sunMat);
+  sunMesh.position.copy(sunPos);
+  scene.add(sunMesh);
+  const flareL=new THREE.PointLight(0xff8b2a, 8, 80);
+  flareL.position.copy(sunPos);
+  scene.add(flareL);
+  // lens flare sprites
+  const spriteTex=(function(){
+    const c=document.createElement('canvas'); c.width=128; c.height=128;
+    const ctx=c.getContext('2d');
+    const g=ctx.createRadialGradient(64,64,0,64,64,64);
+    g.addColorStop(0,'rgba(255,255,255,1)');
+    g.addColorStop(0.2,'rgba(255,240,180,0.85)');
+    g.addColorStop(0.45,'rgba(255,160,60,0.42)');
+    g.addColorStop(1,'rgba(255,90,20,0)');
+    ctx.fillStyle=g; ctx.fillRect(0,0,128,128);
+    return new THREE.CanvasTexture(c);
+  })();
+  const flareSprites=[];
+  const flareColors=[0xffffff,0xffd39a,0xff8f42,0x8fbfff,0xffffff];
+  const flareScales=[7,4,2.2,1.4,0.9];
+  const flarePosT=[-0.45,-0.2,0.05,0.28,0.52];
+  for(let i=0;i<5;i++){
+    const m=new THREE.SpriteMaterial({map:spriteTex, color:flareColors[i], transparent:true, opacity:0.0, blending:THREE.AdditiveBlending, depthWrite:false});
+    const s=new THREE.Sprite(m);
+    s.scale.set(flareScales[i],flareScales[i],1);
+    s.userData.t=flarePosT[i];
+    s.userData.baseOp=[0.62,0.28,0.18,0.12,0.16][i];
+    scene.add(s);
+    flareSprites.push(s);
+  }
+  scene.userData.flareSprites=flareSprites;
+  scene.userData.sunMesh=sunMesh;
+}
+
+// --- satellite ---
+const satelliteGroup=new THREE.Group();
+satelliteGroup.position.set(0,0.2,0);
+scene.add(satelliteGroup);
+
+// body
+const satBodyMat=new THREE.MeshStandardMaterial({color:0xd8dde6, metalness:0.62, roughness:0.38, envMapIntensity:0.8});
+const satBodyGeo=new THREE.BoxGeometry(2.6,1.45,1.55);
+const satBody=new THREE.Mesh(satBodyGeo, satBodyMat);
+satBody.castShadow=false;
+satelliteGroup.add(satBody);
+// detail panels on body
+const bodyDetailMat=new THREE.MeshStandardMaterial({color:0x9aa3b6, metalness:0.55, roughness:0.45});
+for(let i=0;i<3;i++){
+  const d=new THREE.Mesh(new THREE.BoxGeometry(0.82,0.06,1.2), bodyDetailMat);
+  d.position.set(0,0.76, -0.35+i*0.35);
+  satelliteGroup.add(d);
+}
+// antenna dish (parabolic)
+{
+  const dishGeo=new THREE.SphereGeometry(0.55, 22,14,0,Math.PI*2,0,Math.PI*0.46);
+  const dishMat=new THREE.MeshStandardMaterial({color:0xcdd6e6, metalness:0.82, roughness:0.24, side:THREE.DoubleSide});
+  const dish=new THREE.Mesh(dishGeo, dishMat);
+  dish.rotation.x=Math.PI;
+  dish.position.set(0.4,0.72, -0.05);
+  dish.scale.set(1,1,0.55);
+  satelliteGroup.add(dish);
+  const dishRim=new THREE.Mesh(new THREE.TorusGeometry(0.55,0.02,8,24, Math.PI*2), new THREE.MeshStandardMaterial({color:0xaab8cc, metalness:0.7, roughness:0.3}));
+  dishRim.position.copy(dish.position); dishRim.position.y-=0.0; dishRim.rotation.x=Math.PI/2;
+  dishRim.scale.set(1,0.55,1);
+  satelliteGroup.add(dishRim);
+  const feed=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.38,8), new THREE.MeshStandardMaterial({color:0x505a6a}));
+  feed.position.set(0.4,1.02,-0.05);
+  satelliteGroup.add(feed);
+}
+// comm array
+{
+  const mast=new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,1.05,6), new THREE.MeshStandardMaterial({color:0x6b7588}));
+  mast.position.set(-0.7,0.9,-0.25);
+  satelliteGroup.add(mast);
+  const ant=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.55,6), bodyDetailMat);
+  ant.position.set(-0.7,1.35,-0.25); ant.rotation.z=0.45;
+  satelliteGroup.add(ant);
+}
+// thruster block
+{
+  const thr=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.42,0.9), new THREE.MeshStandardMaterial({color:0x3a414d, metalness:0.6, roughness:0.55}));
+  thr.position.set(0, -0.02, -0.98);
+  satelliteGroup.add(thr);
+  const noz=new THREE.Mesh(new THREE.ConeGeometry(0.18,0.32,12,1,true), new THREE.MeshStandardMaterial({color:0x232830, metalness:0.85, roughness:0.4, side:THREE.DoubleSide}));
+  noz.rotation.x=Math.PI; noz.position.set(0,-0.1,-1.28);
+  satelliteGroup.add(noz);
+}
+
+// damaged power coupler housing
+const couplerLocal=new THREE.Vector3(0, -0.38, 0.78);
+const couplerGroup=new THREE.Group();
+couplerGroup.position.copy(couplerLocal);
+satelliteGroup.add(couplerGroup);
+const couplerHousingGeo=new THREE.BoxGeometry(0.62,0.38,0.52);
+const couplerHousingMat=new THREE.MeshStandardMaterial({color:0x4a525f, metalness:0.7, roughness:0.45});
+const couplerHousing=new THREE.Mesh(couplerHousingGeo, couplerHousingMat);
+couplerGroup.add(couplerHousing);
+const couplerInner=new THREE.Mesh(new THREE.BoxGeometry(0.44,0.22,0.38), new THREE.MeshStandardMaterial({color:0x0a0d11, metalness:0.2, roughness:0.85}));
+couplerInner.position.set(0,0,0.07);
+couplerGroup.add(couplerInner);
+// broken module (to be removed)
+const brokenMat=new THREE.MeshStandardMaterial({color:0x3d3a33, metalness:0.55, roughness:0.78, emissive:0x251508, emissiveIntensity:0.22});
+const brokenModule=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.16,0.32), brokenMat);
+brokenModule.position.set(0,0,0.12);
+brokenModule.rotation.set(0.18,-0.22,0.14);
+couplerGroup.add(brokenModule);
+// cracked panel detail
+const crack=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.02,0.34), new THREE.MeshStandardMaterial({color:0x0a0a0a, transparent:true, opacity:0.0}));
+couplerGroup.add(crack);
+
+// replacement glowing module (initially hidden, held by service)
+const newModuleGeo=new THREE.BoxGeometry(0.40,0.18,0.34);
+const newModuleMat=new THREE.MeshStandardMaterial({color:0xb8f7d0, metalness:0.35, roughness:0.35, emissive:0x18ff7a, emissiveIntensity:1.65, transparent:true, opacity:1});
+const newModule=new THREE.Mesh(newModuleGeo, newModuleMat);
+newModule.scale.set(1,1,1);
+// add edge glow
+const newModuleEdge=new THREE.Mesh(new THREE.BoxGeometry(0.42,0.04,0.36), new THREE.MeshBasicMaterial({color:0x18ff7a, transparent:true, opacity:0.62, blending:THREE.AdditiveBlending, depthWrite:false}));
+newModule.add(newModuleEdge);
+newModuleEdge.position.y=0.11;
+newModule.visible=false;
+satelliteGroup.add(newModule); // will be positioned later world space but for now child of satellite for easy
+// subtle inner light for coupler when repaired
+const couplerLight=new THREE.PointLight(0x18ff7a, 0, 3.2);
+couplerLight.position.copy(couplerLocal); couplerLight.position.z+=0.18;
+satelliteGroup.add(couplerLight);
+
+// warning lights (two)
+const warnLights=[];
+[[0.95,0.38,0.35],[ -0.92,0.38,0.35]].forEach((p,i)=>{
+  const g=new THREE.SphereGeometry(0.05,10,10);
+  const m=new THREE.MeshStandardMaterial({color: i===0?0xff3a2a:0xff3a2a, emissive:0xff2200, emissiveIntensity:2.2, transparent:true, opacity:1});
+  const mesh=new THREE.Mesh(g,m);
+  mesh.position.set(p[0],p[1],p[2]);
+  satelliteGroup.add(mesh);
+  // housing
+  const h=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.04,10), new THREE.MeshStandardMaterial({color:0x222a36, metalness:0.7, roughness:0.4}));
+  h.position.copy(mesh.position); h.position.y-=0.04;
+  satelliteGroup.add(h);
+  warnLights.push(mesh);
+});
+scene.userData.warnLights=warnLights;
+scene.userData.couplerLight=couplerLight;
+
+// solar arrays
+function makeWing(isLeft){
+  const wing=new THREE.Group();
+  const side=isLeft?-1:1;
+  wing.position.set(side*1.32, 0.05, 0);
+  // hinge
+  const hinge=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.32,10), new THREE.MeshStandardMaterial({color:0x5a657a, metalness:0.7, roughness:0.35}));
+  hinge.rotation.z=Math.PI/2;
+  hinge.position.set(side*0.08,0,0);
+  wing.add(hinge);
+  const panels=[];
+  const panelMat=new THREE.MeshStandardMaterial({color:0x0b1230, metalness:0.12, roughness:0.22, emissive:0x0a1a5a, emissiveIntensity:0.18});
+  const cellMat=new THREE.MeshStandardMaterial({color:0x15265a, metalness:0.0, roughness:0.5});
+  for(let i=0;i<3;i++){
+    const pg=new THREE.Group();
+    const span= isLeft ? -1 : 1;
+    pg.position.set(span*(0.18 + i*1.06), 0, 0);
+    const panel=new THREE.Mesh(new THREE.BoxGeometry(1.02,0.035,1.42), panelMat);
+    panel.castShadow=false;
+    pg.add(panel);
+    // cells grid
+    for(let cx=-1;cx<=1;cx++){
+      for(let cz=-1;cz<=1;cz++){
+        if((cx+cz)%2===0) continue;
+        const cell=new THREE.Mesh(new THREE.BoxGeometry(0.28,0.038,0.32), cellMat);
+        cell.position.set(cx*0.28, 0.008, cz*0.34);
+        pg.add(cell);
+        // specular line
+        const line=new THREE.Mesh(new THREE.BoxGeometry(0.92,0.005,0.02), new THREE.MeshBasicMaterial({color:0x6d9bff, transparent:true, opacity:0.18}));
+        line.position.set(0,0.022, cz*0.34);
+        pg.add(line);
+      }
+    }
+    // frame
+    const frame=new THREE.Mesh(new THREE.BoxGeometry(1.06,0.02,1.46), new THREE.MeshStandardMaterial({color:0xc8d3ea, metalness:0.72, roughness:0.28}));
+    frame.position.y=-0.018;
+    // make frame as edge: use wire? we keep as subtle backing
+    pg.add(frame);
+    // damage hint: on middle panel of left wing show crack
+    if(isLeft && i===1){
+      const dmg=new THREE.Mesh(new THREE.BoxGeometry(1.04,0.036,0.06), new THREE.MeshBasicMaterial({color:0x05070a, transparent:true, opacity:0.9}));
+      dmg.position.set(0,0.02,0.18);
+      dmg.rotation.z=0.42;
+      pg.add(dmg);
+      pg.userData.dmg=dmg;
+    }
+    wing.add(pg);
+    panels.push(pg);
+  }
+  // arrange panels initially folded is handled by wing rotation and individual panel folding
+  wing.userData.panels=panels;
+  return wing;
+}
+const wingL=makeWing(true);
+const wingR=makeWing(false);
+satelliteGroup.add(wingL);
+satelliteGroup.add(wingR);
+scene.userData.wingL=wingL;
+scene.userData.wingR=wingR;
+
+// --- service spacecraft ---
+const serviceGroup=new THREE.Group();
+scene.add(serviceGroup);
+
+// body shape: tapered box + nose
+const svcBodyMat=new THREE.MeshStandardMaterial({color:0xe9eef6, metalness:0.42, roughness:0.42});
+const svcCore=new THREE.Mesh(new THREE.BoxGeometry(1.85,0.92,1.15), svcBodyMat);
+serviceGroup.add(svcCore);
+// nose cap
+const noseGeo=new THREE.CylinderGeometry(0.42,0.58,0.55,14);
+const noseMat=new THREE.MeshStandardMaterial({color:0xf2f5fb, metalness:0.35, roughness:0.38});
+const nose=new THREE.Mesh(noseGeo, noseMat);
+nose.rotation.z=Math.PI/2;
+nose.position.set(1.12,0,0);
+serviceGroup.add(nose);
+const noseCap=new THREE.Mesh(new THREE.SphereGeometry(0.42,14,10,0,Math.PI*2,0,Math.PI*0.5), noseMat);
+noseCap.rotation.z=-Math.PI/2;
+noseCap.position.set(1.395,0,0);
+serviceGroup.add(noseCap);
+// cockpit window
+const cockpit=new THREE.Mesh(new THREE.SphereGeometry(0.26,14,10,0,Math.PI*2,0,Math.PI*0.5), new THREE.MeshStandardMaterial({color:0x8ec8ff, metalness:0.85, roughness:0.15, emissive:0x1a5a9a, emissiveIntensity:0.55, transparent:true, opacity:0.96}));
+cockpit.rotation.z=-Math.PI/2;
+cockpit.position.set(0.88,0.22,0);
+cockpit.scale.set(1,0.7,1);
+serviceGroup.add(cockpit);
+// side RCS pods
+[-0.42,0.42].forEach(z=>{
+  const pod=new THREE.Mesh(new THREE.BoxGeometry(0.62,0.18,0.32), new THREE.MeshStandardMaterial({color:0xcbd6ea, metalness:0.5, roughness:0.4}));
+  pod.position.set(-0.15,0.08,z);
+  serviceGroup.add(pod);
+  const thrNoz=new THREE.Mesh(new THREE.ConeGeometry(0.08,0.16,10), new THREE.MeshStandardMaterial({color:0x252a33, metalness:0.8, roughness:0.35}));
+  thrNoz.rotation.x=Math.PI; thrNoz.position.set(-0.48,0.08,z);
+  serviceGroup.add(thrNoz);
+});
+// dorsal antenna
+const svcAnt=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.42,6), new THREE.MeshStandardMaterial({color:0x8a93a6}));
+svcAnt.position.set(-0.42,0.66,0);
+serviceGroup.add(svcAnt);
+// bay door hint
+const bay=new THREE.Mesh(new THREE.BoxGeometry(0.72,0.05,0.68), new THREE.MeshStandardMaterial({color:0x6b758a, metalness:0.6, roughness:0.45}));
+bay.position.set(0.12,-0.49,0);
+serviceGroup.add(bay);
+
+// robotic arms (two clamps)
+function makeArm(side){
+  const g=new THREE.Group();
+  g.position.set(0.62, -0.18, side*0.38);
+  const upper=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.036,0.72,8), new THREE.MeshStandardMaterial({color:0xd0d8e8, metalness:0.55, roughness:0.38}));
+  upper.position.set(0, -0.36,0);
+  g.add(upper);
+  const elbow=new THREE.Mesh(new THREE.SphereGeometry(0.06,10,10), new THREE.MeshStandardMaterial({color:0x9aa8c4, metalness:0.6, roughness:0.35}));
+  elbow.position.set(0,-0.72,0);
+  g.add(elbow);
+  const fore=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.028,0.62,8), new THREE.MeshStandardMaterial({color:0xe0e8f8, metalness:0.5, roughness:0.4}));
+  fore.position.set(0, -1.02,0);
+  g.add(fore);
+  const clamp=new THREE.Group();
+  clamp.position.set(0, -1.33,0);
+  const clawA=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.04,0.06), new THREE.MeshStandardMaterial({color:0x9aa8c4, metalness:0.7, roughness:0.3}));
+  clawA.position.set(0.05,0,0);
+  const clawB=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.04,0.06), clawA.material);
+  clawB.position.set(-0.05,0,0);
+  clamp.add(clawA,clawB);
+  const tip=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.06,0.03), new THREE.MeshStandardMaterial({color:0xff6a2a, emissive:0xff3a00, emissiveIntensity:0.9, transparent:true, opacity:0.95}));
+  tip.position.set(0,0.04,0);
+  clamp.add(tip);
+  g.add(clamp);
+  g.userData={upper, fore, clamp, clawA, clawB, tip};
+  // initial folded
+  g.rotation.z= 1.25 * side*0.35;
+  g.rotation.x= side*0.55;
+  return g;
+}
+const armL=makeArm(-1);
+const armR=makeArm(1);
+serviceGroup.add(armL,armR);
+scene.userData.arms=[armL,armR];
+
+// thruster plumes (three)
+const plumeGroup=new THREE.Group();
+plumeGroup.position.set(-0.93,0,0);
+serviceGroup.add(plumeGroup);
+const plumeMats=[];
+for(let i=0;i<3;i++){
+  const z=(i-1)*0.24;
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(0.13,0.65,12,1,true), new THREE.MeshBasicMaterial({color: new THREE.Color().setHSL(0.07 - i*0.015, 1, 0.6), transparent:true, opacity:0.0, blending:THREE.AdditiveBlending, depthWrite:false}));
+  cone.rotation.z=-Math.PI/2;
+  cone.position.set(-0.08,0,z);
+  // inner core
+  const core=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.42,12,1,true), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.0, blending:THREE.AdditiveBlending}));
+  core.rotation.z=-Math.PI/2;
+  core.position.set(0.06,0,z);
+  plumeGroup.add(cone,core);
+  cone.userData.core=core;
+  plumeMats.push(cone);
+}
+scene.userData.plumes=plumeMats;
+
+// nav lights service
+const svcLights=[];
+[ {p:[0.88,0.32,0],c:0xff1a1a},{p:[-0.78,0.32,0.52],c:0x1aff5a},{p:[-0.78,0.32,-0.52],c:0x1a5aff}].forEach(o=>{
+  const m=new THREE.Mesh(new THREE.SphereGeometry(0.028,8,8), new THREE.MeshStandardMaterial({color:o.c, emissive:o.c, emissiveIntensity:2.0, transparent:true, opacity:1}));
+  m.position.set(o.p[0],o.p[1],o.p[2]);
+  serviceGroup.add(m);
+  svcLights.push(m);
+});
+scene.userData.svcLights=svcLights;
+
+// --- repair drone ---
+const droneGroup=new THREE.Group();
+scene.add(droneGroup);
+const droneBodyMat=new THREE.MeshStandardMaterial({color:0xe8edf5, metalness:0.45, roughness:0.35});
+const dBody=new THREE.Mesh(new THREE.BoxGeometry(0.36,0.14,0.26), droneBodyMat);
+droneGroup.add(dBody);
+const dEye=new THREE.Mesh(new THREE.SphereGeometry(0.055,10,10), new THREE.MeshStandardMaterial({color:0x1aff7a, emissive:0x1aff7a, emissiveIntensity:2.2, transparent:true, opacity:1}));
+dEye.position.set(0.14,0,0);
+droneGroup.add(dEye);
+const dLight=new THREE.PointLight(0x1aff7a, 0.9, 2.2);
+dLight.position.copy(dEye.position);
+droneGroup.add(dLight);
+// arms
+[-1,1].forEach(s=>{
+  const arm=new THREE.Mesh(new THREE.BoxGeometry(0.18,0.02,0.02), new THREE.MeshStandardMaterial({color:0x9aa8c4, metalness:0.6, roughness:0.3}));
+  arm.position.set(0,0.02, s*0.16);
+  droneGroup.add(arm);
+  const tool=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.08,6), new THREE.MeshStandardMaterial({color:0x3a414e, metalness:0.7, roughness:0.35}));
+  tool.rotation.z=Math.PI/2;
+  tool.position.set(0.20,0.02, s*0.16);
+  droneGroup.add(tool);
+});
+// props (4 small rotors visual)
+for(let i=0;i<4;i++){
+  const ang=i*Math.PI/2+Math.PI/4;
+  const x=Math.cos(ang)*0.14, z=Math.sin(ang)*0.14;
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(0.032,0.032,0.015,8), new THREE.MeshStandardMaterial({color:0x2a303c}));
+  hub.position.set(x,0.09,z);
+  droneGroup.add(hub);
+  const blade=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.008,0.018), new THREE.MeshStandardMaterial({color:0xcbd6ea, transparent:true, opacity:0.92}));
+  blade.position.set(x,0.095,z);
+  blade.userData.spinSpeed= 18 + i*2;
+  hub.userData.blade=blade;
+  droneGroup.add(blade);
+  hub.userData.isRotor=true;
+}
+scene.userData.droneLight=dLight;
+// drone thruster plume tiny
+const dronePlume=new THREE.Mesh(new THREE.ConeGeometry(0.06,0.18,8,1,true), new THREE.MeshBasicMaterial({color:0x8ec8ff, transparent:true, opacity:0.0, blending:THREE.AdditiveBlending}));
+dronePlume.rotation.z= -Math.PI/2 -0.15;
+dronePlume.position.set(-0.18,0,0);
+droneGroup.add(dronePlume);
+scene.userData.dronePlume=dronePlume;
+
+// initially place drone inside service bay
+droneGroup.visible=true;
+
+// debris field (restrained)
+const debrisGroup=new THREE.Group();
+scene.add(debrisGroup);
+const debrisMeshes=[];
+for(let i=0;i<16;i++){
+  const s=Rr(0.035,0.11);
+  let geo;
+  const t=R();
+  if(t<0.33) geo=new THREE.BoxGeometry(s,s*0.8,s*0.6);
+  else if(t<0.66) geo=new THREE.TetrahedronGeometry(s*0.7,0);
+  else geo=new THREE.IcosahedronGeometry(s*0.6,0);
+  const mat=new THREE.MeshStandardMaterial({color: new THREE.Color().setHSL(Rr(0.55,0.62),0.12, Rr(0.35,0.55)), metalness:0.45+R()*0.25, roughness:0.55+R()*0.3});
+  const m=new THREE.Mesh(geo, mat);
+  // positions around orbital plane
+  const a=R()*Math.PI*2;
+  const rad= 5 + R()*9;
+  const y= Rr(-1.6, 2.4);
+  m.position.set(Math.cos(a)*rad, y+ Rr(-0.6,0.6), Math.sin(a)*rad);
+  m.rotation.set(R()*Math.PI, R()*Math.PI, R()*Math.PI);
+  m.userData.spin=new THREE.Vector3(Rr(-0.8,0.8), Rr(-0.9,0.9), Rr(-0.6,0.6));
+  m.userData.drift=new THREE.Vector3(Rr(-0.015,0.015), Rr(-0.008,0.008), Rr(-0.015,0.015));
+  debrisGroup.add(m);
+  debrisMeshes.push(m);
+}
+// larger panels debris
+for(let i=0;i<3;i++){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.015,0.42), new THREE.MeshStandardMaterial({color:0x22304a, metalness:0.2, roughness:0.5, side:THREE.DoubleSide}));
+  m.position.set(Rr(-6,6), Rr(0.2,1.8), Rr(-7,7));
+  m.rotation.set(R()*0.6,R()*0.8,R()*0.4);
+  m.userData.spin=new THREE.Vector3(Rr(-0.3,0.3),Rr(-0.4,0.4),Rr(-0.2,0.2));
+  m.userData.drift=new THREE.Vector3(Rr(-0.012,0.012),0, Rr(-0.012,0.012));
+  debrisGroup.add(m);
+  debrisMeshes.push(m);
+}
+
+// sparks particles at coupler
+const sparkGeo=new THREE.BufferGeometry();
+const sparkCount=48;
+const sparkPos=new Float32Array(sparkCount*3);
+const sparkVel=new Float32Array(sparkCount*3);
+const sparkLife=new Float32Array(sparkCount);
+for(let i=0;i<sparkCount;i++){
+  sparkPos[i*3]=0; sparkPos[i*3+1]=0; sparkPos[i*3+2]=0;
+  sparkVel[i*3]= Rr(-1.2,1.2); sparkVel[i*3+1]=Rr(0.4,2.0); sparkVel[i*3+2]=Rr(-1.2,1.2);
+  sparkLife[i]=R();
+}
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos,3));
+const sparkMat=new THREE.PointsMaterial({size:0.065, color:0xffb84a, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false, sizeAttenuation:true});
+const sparks=new THREE.Points(sparkGeo, sparkMat);
+satelliteGroup.add(sparks);
+sparks.position.copy(couplerLocal);
+sparks.position.z+=0.14;
+sparks.position.y+=0.06;
+scene.userData.sparks=sparks;
+scene.userData.sparkPos=sparkPos;
+scene.userData.sparkVel=sparkVel;
+scene.userData.sparkLife=sparkLife;
+
+const smallSparksGeo=new THREE.BufferGeometry();
+const s2Count=28;
+const s2Pos=new Float32Array(s2Count*3);
+const s2Vel=new Float32Array(s2Count*3);
+for(let i=0;i<s2Count;i++){ s2Vel[i*3]=Rr(-0.9,0.9); s2Vel[i*3+1]=Rr(0.2,1.1); s2Vel[i*3+2]=Rr(-0.9,0.9); }
+smallSparksGeo.setAttribute('position', new THREE.BufferAttribute(s2Pos,3));
+const s2Mat=new THREE.PointsMaterial({size:0.035, color:0x6ec6ff, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false});
+const smallSparks=new THREE.Points(smallSparksGeo, s2Mat);
+smallSparks.position.copy(sparks.position);
+smallSparks.position.x+=0.02;
+satelliteGroup.add(smallSparks);
+scene.userData.smallSparks=smallSparks;
+scene.userData.s2Pos=s2Pos;
+scene.userData.s2Vel=s2Vel;
+scene.userData.sparkMat=sparkMat;
+scene.userData.s2Mat=s2Mat;
+
+// welding sparks during drone repair (another emitter)
+const weldGeo=new THREE.BufferGeometry();
+const wCount=32;
+const wPos=new Float32Array(wCount*3);
+const wVel=new Float32Array(wCount*3);
+for(let i=0;i<wCount;i++){ wVel[i*3]=Rr(-1.5,1.5); wVel[i*3+1]=Rr(-0.8,1.6); wVel[i*3+2]=Rr(-1.5,1.5); }
+weldGeo.setAttribute('position', new THREE.BufferAttribute(wPos,3));
+const weldMat=new THREE.PointsMaterial({size:0.065, color:0xfff2a0, transparent:true, opacity:0, blending:THREE.AdditiveBlending, depthWrite:false});
+const weldSparks=new THREE.Points(weldGeo, weldMat);
+scene.add(weldSparks);
+scene.userData.weldSparks=weldSparks;
+scene.userData.wPos=wPos;
+scene.userData.wVel=wVel;
+scene.userData.weldMat=weldMat;
+
+// --- resize handling for stable 16:9 ---
+function onResize(){
+  const frame=document.getElementById('frame');
+  const vw=window.innerWidth, vh=window.innerHeight;
+  const aspect=16/9;
+  let w, h;
+  if(vw/vh > aspect){ h=vh; w=vh*aspect; } else { w=vw; h=vw/aspect; }
+  // renderer size to canvas CSS size * dpr
+  const dpr=Math.min(devicePixelRatio,2);
+  renderer.setSize(w, h, false);
+  // also set canvas style already via CSS but ensure composer size
+  camera.aspect=w/h;
+  camera.updateProjectionMatrix();
+  if(useComposer && composer) composer.setSize(w*dpr, h*dpr);
+  else renderer.setSize(w, h, false);
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+// --- animation helpers ---
+let startTime=performance.now()*0.001;
+let lastT=-1;
+
+function computeServiceState(t){
+  const startPos=new THREE.Vector3(-26, 2.8, 16);
+  const dockPos=new THREE.Vector3(-2.62, 0.06, 0.08);
+  let pos=new THREE.Vector3();
+  let thrust=0;
+  let dockProgress=0;
+  if(t < 14){
+    const u=clamp(t/14,0,1);
+    const e=easeOutCubic(u);
+    // subtle approach curve: ease + slight vertical dip then rise
+    pos.lerpVectors(startPos, dockPos, e);
+    // add braking arc: slight overshoot correction
+    pos.y += Math.sin(e*Math.PI)*0.55 * (1-e)*1.2;
+    pos.z += Math.sin(e*Math.PI*0.5)*0.6;
+    // velocity approx derivative
+    const vel = 1 - Math.pow(1-u,1.8);
+    // thrust profile: strong early, coast, strong braking
+    if(u < 0.18) thrust= 0.95 - u*1.2;
+    else if(u < 0.58) thrust= 0.18 + Math.sin(t*3.2)*0.04;
+    else if(u < 0.82) thrust= 0.42 + (u-0.58)*1.1;
+    else thrust= 0.82 + Math.sin(t*12)*0.18 + (1-u)*0.6; // braking pulses
+    thrust=clamp(thrust,0,1);
+    dockProgress= clamp((t-10)/4,0,1);
+  } else {
+    pos.copy(dockPos);
+    // stay docked with micro drift locked to satellite
+    pos.x += Math.sin(t*0.34)*0.012;
+    pos.y += Math.cos(t*0.28)*0.01;
+    pos.z += Math.sin(t*0.22)*0.008;
+    thrust= 0;
+    dockProgress=1;
+  }
+  return {pos, thrust, dockProgress};
+}
+
+function computeRepairState(t){
+  // drone phases
+  const active = t>=16 && t<23;
+  const phase = clamp((t-16)/7,0,1);
+  let sub='idle';
+  if(phase<0.30) sub='outbound';
+  else if(phase<0.45) sub='removing';
+  else if(phase<0.70) sub='installing';
+  else if(phase<1) sub='return';
+  return {active, phase, sub};
+}
+
+const scratchV=new THREE.Vector3();
+const scratchV2=new THREE.Vector3();
+
+function updateScene(time){
+  let raw= time - startTime;
+  // force meaningful motion within one second: ensure at t=0 motion already, we already start with motion
+  let t= raw % DURATION;
+  if(t<0) t+=DURATION;
+  // normalize slight smoothing for loop wrap visual: no jump
+  const dt = lastT<0? 0 : (t - lastT);
+  lastT=t;
+  const tN=t/DURATION;
+
+  // Earth & clouds motion
+  earthMesh.rotation.y = 0.35 + t*0.012;
+  cloudMesh.rotation.y = 0.33 + t*0.018;
+  atmoMat.uniforms.time.value=t;
+  // tiny earth group breathing?
+  // debris drift
+  for(const m of debrisMeshes){
+    m.position.add(m.userData.drift.clone().multiplyScalar(0.016));
+    m.rotation.x += m.userData.spin.x*0.008;
+    m.rotation.y += m.userData.spin.y*0.008;
+    m.rotation.z += m.userData.spin.z*0.007;
+    // wrap
+    if(m.position.length()>14){ m.position.multiplyScalar(0.92); }
+  }
+
+  // service state
+  const svc=computeServiceState(t);
+  serviceGroup.position.copy(svc.pos);
+  // service orientation: approach attitude, then align to satellite after docking
+  let svcRotY=0, svcRotZ=0, svcRotX=0;
+  if(t<8){
+    svcRotY= lerp(0.35, -0.08, easeOutCubic(clamp(t/8,0,1)));
+    svcRotZ= -0.06 + Math.sin(t*0.9)*0.02;
+  } else if(t<13){
+    const u=clamp((t-8)/5,0,1);
+    svcRotY= lerp(-0.08, 0.02, smoothstep(u));
+    svcRotZ= lerp(-0.06, 0.01, smoothstep(u));
+    svcRotX= lerp(0, -0.03, smoothstep(u));
+  } else {
+    svcRotY= 0.02;
+    svcRotZ= 0.005;
+  }
+  serviceGroup.rotation.set(svcRotX, svcRotY, svcRotZ);
+
+  // thruster plumes
+  for(let i=0;i<plumeMats.length;i++){
+    const mesh=plumeMats[i];
+    const core=mesh.userData.core;
+    const base= svc.thrust * (0.72 + (i===1?0.2:0) + Math.sin(t*18 + i)*0.07 );
+    const op= clamp(base,0,1) * 0.92;
+    const pulse = (t>12.6 && t<14) ? (Math.sin(t*22+i)*0.5+0.5)*0.35+0.65 : 1;
+    mesh.material.opacity= op*pulse;
+    core.material.opacity= op*0.55*pulse;
+    const scale= 0.55 + base*1.35;
+    mesh.scale.set(scale, 1, 1);
+    core.scale.set(scale*0.82,1,1);
+    mesh.position.x= -0.08 - base*0.07;
+    // flicker
+    mesh.material.color.setHSL(0.055 + Math.sin(t*9+i)*0.015, 1, 0.58 + base*0.08);
+  }
+
+  // service nav lights blink
+  svcLights.forEach((l,i)=>{
+    const blink= (Math.sin(t*3.2 + i*1.7)>0.15) ? 1:0.12;
+    l.material.emissiveIntensity= 1.2 + blink*1.4;
+    l.material.opacity= 0.55+blink*0.45;
+    const s= 1+blink*0.22;
+    l.scale.set(s,s,s);
+  });
+
+  // satellite tumble and repair states
+  const repairDone = t >= 21.2;
+  const dockingLocked = t >= 13.2;
+  let tumbleFactor;
+  if(t < 13.2) tumbleFactor=1;
+  else if(t < 21.2) tumbleFactor= THREE.MathUtils.mapLinear(t,13.2,21.2,1,0);
+  else tumbleFactor=0;
+
+  // base tumbling before lock
+  if(tumbleFactor>0.001){
+    satelliteGroup.rotation.x= Math.sin(t*0.52 + 0.2)*0.28*tumbleFactor + 0.12*(1-tumbleFactor);
+    satelliteGroup.rotation.y= Math.cos(t*0.41)*0.46*tumbleFactor + Math.sin(t*0.18)*0.08*tumbleFactor -0.12;
+    satelliteGroup.rotation.z= Math.sin(t*0.33)*0.22*tumbleFactor + Math.cos(t*0.61)*0.12*tumbleFactor;
+  } else {
+    // smoothly settle to stable pose
+    const settle= clamp((t-21.2)/1.2,0,1);
+    const sx=THREE.MathUtils.lerp(satelliteGroup.rotation.x, 0.04, settle*0.08);
+    const sy=THREE.MathUtils.lerp(satelliteGroup.rotation.y, -0.06, settle*0.08);
+    const sz=THREE.MathUtils.lerp(satelliteGroup.rotation.z, 0, settle*0.08);
+    satelliteGroup.rotation.set(sx,sy,sz);
+    // after settle just hold
+    if(settle>0.95) satelliteGroup.rotation.set(0.04,-0.06,0.0);
+  }
+  // subtle orbital bob
+  satelliteGroup.position.y= 0.2 + Math.sin(t*0.38)*0.04*(1-tumbleFactor*0.7);
+
+  // solar array deployment
+  const deployP= clamp((t-22)/4.8,0,1);
+  const deployE= easeInOutCubic(deployP);
+  const startAngle=0.62; // folded droopy
+  const endAngle=0.0;
+  const curAngle= lerp(startAngle, endAngle, deployE);
+  // left wing hinge rotation
+  wingL.rotation.z=  curAngle + (tumbleFactor*0.08*Math.sin(t*0.6));
+  wingR.rotation.z= -curAngle + (tumbleFactor*0.08*Math.cos(t*0.5));
+  // also individual panel folding
+  wingL.userData.panels.forEach((pg,i)=>{
+    const f= i===0? 0 : lerp(0.55, 0, deployE) * (i*0.45);
+    pg.rotation.z= pg.userData.dmg ? lerp(0.42, 0, deployE) : f*(i===1?1:0.6);
+    if(pg.userData.dmg) pg.userData.dmg.material.opacity= 0.9*(1-deployE);
+  });
+  wingR.userData.panels.forEach((pg,i)=>{
+    const f= i===0? 0 : lerp(0.48, 0, deployE) * (i*0.42);
+    pg.rotation.z= f*(i===1?1:0.55);
+  });
+  // after deploy, add subtle flutter
+  if(deployP>0.95){
+    wingL.rotation.z+= Math.sin(t*1.2)*0.012;
+    wingR.rotation.z+= Math.cos(t*1.15)*0.011;
+  }
+
+  // robotic arms articulation
+  {
+    const dockP= svc.dockProgress;
+    const armExtend= easeInOutCubic(dockP);
+    [armL,armR].forEach((arm,i)=>{
+      const side=i===0?-1:1;
+      // folded -> extended to grapple satellite side
+      const foldAngle= lerp(1.35, 0.42, armExtend);
+      arm.rotation.z= side*foldAngle*0.35 + side*0.08;
+      arm.rotation.x= side * lerp(0.55, 0.06, armExtend);
+      arm.rotation.y= lerp(-0.32, 0.04, armExtend);
+      arm.position.x= lerp(0.62, 0.88, armExtend);
+      arm.position.y= lerp(-0.18, -0.12, armExtend);
+      // elbow bend
+      arm.userData.fore.position.y= lerp(-1.02, -0.82, armExtend);
+      arm.userData.clamp.position.y= lerp(-1.33, -1.12, armExtend);
+      // clamp open/close
+      const grip= clamp((t-13.8)/0.7,0,1);
+      const open= lerp(0.06, 0.015, grip);
+      arm.userData.clawA.position.x= open;
+      arm.userData.clawB.position.x= -open;
+      arm.userData.tip.material.emissiveIntensity= dockingLocked ? 0.25 : 0.9 + Math.sin(t*8)*0.3;
+      arm.userData.tip.material.opacity= dockingLocked ? 0.35 : 0.95;
+      // magnetic lock glow when docked
+      if(dockingLocked){
+        arm.userData.tip.material.color.set(0x1aff7a);
+        arm.userData.tip.material.emissive.set(0x1aff7a);
+      } else {
+        arm.userData.tip.material.color.set(0xff6a2a);
+        arm.userData.tip.material.emissive.set(0xff3a00);
+      }
+    });
+  }
+
+  // drone trajectory
+  {
+    const bayLocal=new THREE.Vector3(0.12,-0.38,0);
+    const bayWorld= bayLocal.clone().applyMatrix4(serviceGroup.matrixWorld);
+    // alternative: compute directly from service pos + offset rotated by service rot (approx)
+    // for deterministic without matrixWorld lag, compute:
+    const bW2= svc.pos.clone().add(new THREE.Vector3(0.12,-0.38,0));
+    // coupler world (satellite group transformed)
+    // couplerLocal transformed by satelliteGroup rotation/position
+    const couplerWorld= couplerLocal.clone();
+    // apply satelliteGroup rotation manually
+    couplerWorld.applyEuler(satelliteGroup.rotation);
+    couplerWorld.add(satelliteGroup.position);
+    // for repair period, tumble is near zero so coupler world ~ (0, -0.18, 0.78)
+    const targetCoupler= couplerWorld.clone();
+    targetCoupler.z+=0.02;
+    let droneTarget;
+    const rep=computeRepairState(t);
+    if(t < 16){
+      droneTarget= bW2.clone();
+      droneGroup.position.copy(droneTarget);
+      droneGroup.rotation.set(0, -0.15, 0.08);
+    } else if(t < 23){
+      const p=rep.phase;
+      // piecewise path with arc
+      let lerpT;
+      let pos=new THREE.Vector3();
+      if(p < 0.30){
+        lerpT= p/0.30;
+        const e= easeInOutCubic(lerpT);
+        pos.lerpVectors(bW2, targetCoupler, e);
+        pos.y += Math.sin(e*Math.PI)*0.42;
+        pos.x += Math.sin(e*Math.PI*0.5)*0.08;
+        droneGroup.rotation.set( lerp(0.08, 0.12, e), lerp(-0.15, 0.05, e), lerp(0.08, -0.06, e) );
+      } else if(p < 0.45){
+        // hovering at coupler removing
+        const u=(p-0.30)/0.15;
+        pos.copy(targetCoupler);
+        pos.x+= Math.sin(t*4.2)*0.015;
+        pos.y+= Math.cos(t*3.8)*0.012;
+        pos.z+= Math.sin(t*3.2)*0.01;
+        droneGroup.rotation.set(0.14, 0.05+Math.sin(t*2)*0.06, -0.04);
+      } else if(p < 0.70){
+        const u=(p-0.45)/0.25;
+        pos.copy(targetCoupler);
+        pos.x+= Math.sin(u*Math.PI)*0.018;
+        pos.y+= Math.cos(u*Math.PI*1.2)*0.02;
+        droneGroup.rotation.set(0.12, 0.08, -0.02);
+      } else {
+        const rt=(p-0.70)/0.30;
+        const e= easeInOutCubic(rt);
+        pos.lerpVectors(targetCoupler, bW2, e);
+        pos.y += Math.sin(e*Math.PI)*0.38;
+        droneGroup.rotation.set( lerp(0.12,0.08,e), lerp(0.08,-0.15,e), lerp(-0.04,0.08,e) );
+      }
+      droneTarget=pos;
+      droneGroup.position.copy(droneTarget);
+      // rotor spin speed increase during transit
+      const moving = (p<0.28 || p>0.72);
+      droneGroup.userData.spinBoost= moving?1.6:1;
+    } else {
+      droneTarget= bW2.clone();
+      // gently bob inside bay
+      droneTarget.y+= Math.sin(t*1.1)*0.008;
+      droneGroup.position.copy(droneTarget);
+      droneGroup.rotation.set(0.06,-0.12,0.04);
+    }
+    // drone plume based on movement
+    const isMoving= (t>=16 && t<16.9) || (t>=21.9 && t<23);
+    dronePlume.material.opacity= isMoving ? 0.52 + Math.sin(t*18)*0.12 : 0.06;
+    dronePlume.scale.set(1 + Math.sin(t*12)*0.08,1,1);
+    // orient plume opposite velocity (approx)
+    if(isMoving) droneGroup.rotation.y+= Math.sin(t*6)*0.02;
+  }
+
+  // rotor blades spin
+  droneGroup.traverse(o=>{
+    if(o.userData && o.userData.spinSpeed!==undefined){
+      o.rotation.y+= 0.55 * o.userData.spinSpeed * 0.016 * (droneGroup.userData.spinBoost||1);
+    }
+  });
+
+  // broken module handling
+  {
+    const repPhase= clamp((t-16)/7,0,1);
+    if(t < 18.1){
+      // attached to coupler
+      if(brokenModule.parent!==couplerGroup){ couplerGroup.add(brokenModule); brokenModule.position.set(0,0,0.12); }
+      brokenModule.visible=true;
+      brokenModule.position.set(0,0,0.12);
+      brokenModule.rotation.set(0.18,-0.22,0.14);
+    } else if(t < 19.4){
+      // being carried by drone
+      const prog=clamp((t-18.1)/1.3,0,1);
+      brokenModule.visible=true;
+      // temporarily parent to droneGroup
+      if(brokenModule.parent!==droneGroup) droneGroup.add(brokenModule);
+      brokenModule.position.set( -0.02, -0.12, 0);
+      brokenModule.rotation.set(0.05+Math.sin(t*5)*0.05, prog*0.6, 0.1);
+      brokenModule.scale.set(1- prog*0.08,1- prog*0.08,1);
+      brokenModule.material.opacity=1;
+    } else if(t < 22){
+      // moving away with drone, fading
+      const prog=clamp((t-19.4)/2.6,0,1);
+      if(brokenModule.parent!==droneGroup) droneGroup.add(brokenModule);
+      brokenModule.visible=true;
+      brokenModule.position.set( -0.02 - prog*0.02, -0.12 - prog*0.04, prog*0.04);
+      brokenModule.material.transparent=true;
+      brokenModule.material.opacity= 1 - prog*0.92;
+      brokenModule.scale.set(0.92- prog*0.25,0.92- prog*0.25,0.92- prog*0.25);
+    } else {
+      brokenModule.visible=false;
+    }
+  }
+  // new module handling
+  {
+    if(t < 16){
+      newModule.visible=false;
+      newModule.position.set(0,0,0);
+    } else if(t < 18.9){
+      // hidden inside drone/bay, invisible
+      newModule.visible=false;
+    } else if(t < 20.6){
+      // drone installing: newModule moves from drone to coupler
+      const prog=clamp((t-18.9)/1.7,0,1);
+      const e=easeInOutCubic(prog);
+      newModule.visible=true;
+      if(newModule.parent!==scene) scene.add(newModule);
+      const startPos=droneGroup.position.clone().add(new THREE.Vector3(0.02,-0.10,0));
+      const endPos=couplerLocal.clone().applyEuler(satelliteGroup.rotation).add(satelliteGroup.position).add(new THREE.Vector3(0,0,0.12));
+      // lerp world
+      newModule.position.lerpVectors(startPos, endPos, e);
+      newModule.rotation.set( lerp(0.15,0.02,e), lerp(0.35, -0.02,e), lerp(0.12,0,e) );
+      newModule.scale.set( lerp(0.85,1,e), lerp(0.85,1,e), lerp(0.85,1,e) );
+      newModule.material.opacity= lerp(0.0,1, clamp(prog*2,0,1));
+      newModule.material.emissiveIntensity= lerp(0.6,1.65,e);
+    } else {
+      // locked in coupler
+      newModule.visible=true;
+      if(newModule.parent!==couplerGroup) couplerGroup.add(newModule);
+      newModule.position.set(0,0,0.12);
+      newModule.rotation.set(0,0,0);
+      newModule.scale.set(1,1,1);
+      newModule.material.opacity=1;
+      newModule.material.emissiveIntensity= 1.65 + Math.sin(t*2.2)*0.08;
+    }
+  }
+
+  // sparks & warning lights
+  {
+    const preRepair = !repairDone;
+    const sparkMat = scene.userData.sparkMat;
+    const s2Mat = scene.userData.s2Mat;
+    if(preRepair){
+      sparkMat.opacity= 0.92;
+      s2Mat.opacity= 0.68;
+      sparkMat.color.set(0xffb84a);
+      // animate sparks positions
+      const arr=sparkGeo.attributes.position;
+      for(let i=0;i<sparkCount;i++){
+        sparkLife[i]-=0.016 * (1.2+R()*0.6);
+        if(sparkLife[i]<=0){
+          arr.setXYZ(i, 0,0,0);
+          sparkLife[i]=Rr(0.6,1);
+          sparkVel[i*3]=Rr(-1.0,1.0);
+          sparkVel[i*3+1]=Rr(0.6,2.2);
+          sparkVel[i*3+2]=Rr(-1.0,1.0);
+        } else {
+          const x=arr.getX(i)+ sparkVel[i*3]*0.016;
+          const y=arr.getY(i)+ sparkVel[i*3+1]*0.016 - 0.45*0.016; // gravity
+          const z=arr.getZ(i)+ sparkVel[i*3+2]*0.016;
+          arr.setXYZ(i,x,y,z);
+          sparkVel[i*3+1]-=0.07*0.016*9.8;
+        }
+      }
+      arr.needsUpdate=true;
+      const s2arr=smallSparks.geometry.attributes.position;
+      const s2Life=scene.userData.sparkLife; // reuse?
+      for(let i=0;i<s2Count;i++){
+        // simple drift
+        const x=s2arr.getX(i)+ s2Vel[i*3]*0.016;
+        const y=s2arr.getY(i)+ s2Vel[i*3+1]*0.016 -0.03*0.016*9.8;
+        const z=s2arr.getZ(i)+ s2Vel[i*3+2]*0.016;
+        s2arr.setXYZ(i,x,y,z);
+        if(Math.abs(x)>1.2 || y>1.4){
+          s2arr.setXYZ(i, Rr(-0.12,0.12), Rr(-0.08,0.08), Rr(-0.12,0.12));
+        }
+      }
+      s2arr.needsUpdate=true;
+    } else {
+      // fade out sparks after repair, converge to 0
+      sparkMat.opacity= Math.max(0, sparkMat.opacity - 0.08);
+      s2Mat.opacity= Math.max(0, s2Mat.opacity - 0.09);
+      // occasional welding sparks still during install phase handled separately
+    }
+    // warning lights
+    warnLights.forEach((l,i)=>{
+      if(!repairDone){
+        const flick= Math.sin(t*7.4 + i*2.1) >0.2 ? 1:0.22;
+        const flick2= R()>0.88 ? 0 : 1;
+        l.material.color.set(0xff2a18);
+        l.material.emissive.set(0xff1600);
+        l.material.emissiveIntensity= 2.4*flick*flick2 + 0.4;
+        l.material.opacity= 0.92*flick+0.15;
+        l.scale.set(1+flick*0.25,1+flick*0.25,1+flick*0.25);
+        const blinkLight=couplerLight;
+        blinkLight.intensity= 0.6*flick + 0.15;
+        blinkLight.color.set(0xff3a18);
+      } else {
+        const settle= clamp((t-21.2)/0.8,0,1);
+        l.material.color.set(0x18ff7a);
+        l.material.emissive.set(0x18ff7a);
+        l.material.emissiveIntensity= lerp(2.4, 1.1, settle) + Math.sin(t*1.6)*0.05;
+        l.material.opacity=1;
+        l.scale.set(1,1,1);
+        couplerLight.intensity= 2.6 + Math.sin(t*2)*0.25;
+        couplerLight.color.set(0x18ff7a);
+        // subtle green pulse propagate
+        if(settle>0.9 && R()>0.96){
+          l.material.emissiveIntensity=2.2;
+        }
+      }
+    });
+
+    // welding sparks during drone install
+    const weldActive = t>=18.8 && t < 20.8;
+    if(weldActive){
+      weldMat.opacity= 0.88;
+      weldSparks.position.copy(couplerLocal.clone().applyEuler(satelliteGroup.rotation).add(satelliteGroup.position));
+      weldSparks.position.y+=0.06; weldSparks.position.z+=0.12;
+      const arr=weldGeo.attributes.position;
+      for(let i=0;i<wCount;i++){
+        const x=arr.getX(i)+ wVel[i*3]*0.016;
+        const y=arr.getY(i)+ wVel[i*3+1]*0.016 -0.05;
+        const z=arr.getZ(i)+ wVel[i*3+2]*0.016;
+        arr.setXYZ(i,x,y,z);
+        if(Math.abs(x)>0.9 || y<-1.2 || Math.abs(z)>0.9){
+          arr.setXYZ(i, Rr(-0.08,0.08), Rr(-0.02,0.08), Rr(-0.08,0.08));
+          wVel[i*3]=Rr(-1.6,1.6); wVel[i*3+1]=Rr(0.4,1.9); wVel[i*3+2]=Rr(-1.6,1.6);
+        }
+      }
+      arr.needsUpdate=true;
+    } else {
+      weldMat.opacity= Math.max(0, weldMat.opacity - 0.1);
+    }
+  }
+
+  // --- camera choreography: 6 shots ---
+  let camPos=new THREE.Vector3();
+  let camTarget=new THREE.Vector3();
+  const satWorldPos=satelliteGroup.position.clone();
+  const svcWorldPos=serviceGroup.position.clone();
+  const midPos=new THREE.Vector3().addVectors(satWorldPos, svcWorldPos).multiplyScalar(0.5);
+
+  if(t < 5){
+    // 1) debris-level approach : low, through debris field, service approaching in distance
+    const p=t/5;
+    const e=smoothstep(p);
+    camPos.set( lerp(-7.2, -4.8, e), lerp(-1.35, -0.55, e) + Math.sin(t*0.9)*0.04, lerp(13.8, 11.2, e) );
+    // add subtle handheld drift ps2 style
+    camPos.x+= Math.sin(t*1.1)*0.06;
+    camPos.y+= Math.cos(t*0.85)*0.04;
+    // target is satellite with service in frame
+    const tgt= new THREE.Vector3().lerpVectors(svcWorldPos, satWorldPos, 0.62);
+    tgt.y+= 0.15*Math.sin(p*Math.PI*0.5);
+    camTarget.copy(tgt);
+    // slight look ahead
+  } else if(t < 11){
+    // 2) side tracking shot : camera moves lateral keeping both craft side-by-side
+    const p=(t-5)/6;
+    const e=smoothstep(p);
+    camPos.set( lerp(-9.5, 6.2, e), lerp(1.65, 2.05, e) + Math.sin(t*0.7)*0.05, lerp(8.8, 7.2, e) );
+    // tracking: follow midpoint but with lag
+    const prog= e;
+    camTarget.set( lerp(svcWorldPos.x, satWorldPos.x, 0.5 + prog*0.18), lerp(0.25,0.32,prog), lerp(svcWorldPos.z, satWorldPos.z, 0.45) );
+    camTarget.x+= Math.sin(t*0.6)*0.08;
+  } else if(t < 16){
+    // 3) close docking shot : tight on docking interface
+    const p=(t-11)/5;
+    const e=easeInOutCubic(p);
+    const dockCenter= new THREE.Vector3(-1.35,0.02,0.06);
+    // camera arcs from side to slightly front
+    camPos.set( lerp(-3.2, -1.95, e) + Math.sin(p*Math.PI*0.5)*0.25, lerp(0.92, 0.52, e) + Math.cos(t*1.2)*0.015, lerp(3.35, 2.05, e) );
+    // ensure not clipping satellite (keep distance >1.1 from center)
+    camTarget.copy(dockCenter);
+    camTarget.x+= Math.sin(t*0.55)*0.04;
+    camTarget.y+= 0.02;
+    // subtle push in as clamps lock
+    camPos.add( new THREE.Vector3(0,0,0).copy(camTarget).sub(camPos).normalize().multiplyScalar(-0.0) );
+  } else if(t < 23){
+    // 4) repair-drone close-up : macro follow drone at coupler
+    const p=(t-16)/7;
+    // orbit slightly around coupler to keep drone framing
+    const ang= -0.35 + p*0.85; // radians
+    const radius= 1.55 - Math.sin(p*Math.PI)*0.18;
+    const cx= satWorldPos.x + couplerLocal.x*Math.cos(satelliteGroup.rotation.y) - couplerLocal.z*Math.sin(satelliteGroup.rotation.y);
+    // simpler: coupler world approx
+    const cw= couplerLocal.clone().applyEuler(satelliteGroup.rotation).add(satWorldPos);
+    camPos.set(
+      cw.x + Math.cos(ang)*radius*0.85,
+      cw.y + 0.42 + Math.sin(p*Math.PI*0.7)*0.18,
+      cw.z + Math.sin(ang)*radius + 1.0
+    );
+    // height variation
+    camPos.y+= Math.sin(t*0.9)*0.03;
+    camTarget.copy(cw);
+    camTarget.y+=0.06;
+    camTarget.x+= droneGroup.position.x*0.12; // bias toward drone
+    camTarget.lerp(droneGroup.position, 0.38);
+    // very close: ensure not inside drone
+    const toCam= new THREE.Vector3().subVectors(camPos, camTarget);
+    if(toCam.length()<0.95){ camPos.copy(camTarget).add(toCam.normalize().multiplyScalar(0.95)); }
+  } else if(t < 28){
+    // 5) solar-array deployment orbit : slow orbit around satellite
+    const p=(t-23)/5;
+    const ang= p*Math.PI*1.05 -0.6;
+    const rad= 6.8 - p*0.6;
+    const height= 1.7 + Math.sin(p*Math.PI)*0.55;
+    camPos.set( Math.cos(ang)*rad, height, Math.sin(ang)*rad );
+    camPos.add(satWorldPos);
+    camTarget.copy(satWorldPos);
+    camTarget.y+= 0.08;
+    // slight tilt to show earth curvature behind
+    camTarget.y-= p*0.22;
+  } else {
+    // 6) final wide pullback with repaired satellite crossing sunrise
+    const p=(t-28)/4;
+    const e=smoothstep(p);
+    camPos.set( lerp(1.2, 3.2, e) + Math.sin(t*0.25)*0.12, lerp(2.6, 5.2, e), lerp(12.5, 20.8, e) );
+    // pullback reveals earth horizon and sun
+    const tgt= satWorldPos.clone();
+    tgt.y+= lerp(0.25, 0.05, e);
+    // drift to include sun at edge
+    tgt.x+= lerp(0.0, 2.2, e)*0.15;
+    camTarget.copy(tgt);
+    camTarget.lerp(new THREE.Vector3(0,-6, -10), 0.08*e); // slight bias toward horizon
+    // keep satellite centered while Earth fills lower third
+  }
+
+  // apply camera with slight smoothing to avoid cuts pop (but cuts are intentional sharp)
+  // hard cuts: instant snap at boundaries - we implement with no smoothing across cuts
+  // detect cut moments: near integer boundaries we snap instantly, else lerp
+  const cutThreshold=0.03;
+  const isNearCut= (Math.abs(t-5)<cutThreshold || Math.abs(t-11)<cutThreshold || Math.abs(t-16)<cutThreshold || Math.abs(t-23)<cutThreshold || Math.abs(t-28)<cutThreshold);
+  if(isNearCut || lastT<0 || dt>0.3){
+    camera.position.copy(camPos);
+    camera.lookAt(camTarget);
+  } else {
+    // gentle damping within shot
+    camera.position.lerp(camPos, 0.09);
+    // lookAt damping: we interpolate target via quaternion slerp
+    const currentDir=new THREE.Vector3(); // we slerp direction
+    // simple: lerp lookAt target then lookAt
+    const smoothedTarget=new THREE.Vector3().copy(camTarget);
+    // we keep previous target in userData
+    if(!camera.userData.prevTgt) camera.userData.prevTgt=smoothedTarget.clone();
+    camera.userData.prevTgt.lerp(smoothedTarget, 0.08);
+    camera.lookAt(camera.userData.prevTgt);
+  }
+  // clamp near clip: ensure camera above earth surface
+  const earthCenter=earthMesh.position.clone();
+  const toCam=new THREE.Vector3().subVectors(camera.position, earthCenter);
+  const distToCenter=toCam.length();
+  if(distToCenter < EARTH_R + 1.2){
+    toCam.normalize().multiplyScalar(EARTH_R+1.25);
+    camera.position.copy(earthCenter).add(toCam);
+  }
+  // prevent clipping through satellite: keep distance >1.4 from satellite center
+  const toSat=new THREE.Vector3().subVectors(camera.position, satWorldPos);
+  if(toSat.length()<1.55){
+    toSat.normalize().multiplyScalar(1.55);
+    camera.position.copy(satWorldPos).add(toSat);
+  }
+
+  // lens flare visibility: compute sun screen projection opacity based on camera angle to sun
+  {
+    const sunDir=new THREE.Vector3().subVectors(sunPos, camera.position).normalize();
+    const camDir=new THREE.Vector3(); camera.getWorldDirection(camDir);
+    const dot= sunDir.dot(camDir);
+    const sunInView= dot>0.08 ? Math.pow(dot, 3)*1.2 : 0;
+    // occlusion by earth? check if sun behind earth disk from camera
+    const toEarth=new THREE.Vector3().subVectors(earthCenter, camera.position);
+    const toSun=new THREE.Vector3().subVectors(sunPos, camera.position);
+    const angle= toEarth.angleTo(toSun);
+    const earthAngSize=Math.asin(EARTH_R / toEarth.length());
+    const occ= angle < earthAngSize ? 0 : 1;
+    const flareSprites=scene.userData.flareSprites;
+    if(flareSprites){
+      const camToSunDist= camera.position.distanceTo(sunPos);
+      flareSprites.forEach((sp,i)=>{
+        const base=sp.userData.baseOp;
+        const vis= sunInView * occ * (0.85 + Math.sin(t*4 + i)*0.04);
+        sp.material.opacity= base*vis * (0.7+0.3*Math.sin(t*1.2+i));
+        // position along line from sun to center
+        const sunScreen=new THREE.Vector3().copy(sunPos).project(camera);
+        // we place sprites in world space along sun-camera line? Use screen approximation: world position interpolation
+        const centerWorld=new THREE.Vector3(0,0,0); // look approximate
+        // simpler: place sprites on line from sun toward camera position
+        const dir=new THREE.Vector3().subVectors(camera.position, sunPos).normalize();
+        const off=sp.userData.t * camToSunDist * 0.35;
+        const wp=new THREE.Vector3().copy(sunPos).add(dir.multiplyScalar(10 + off));
+        // keep sprites facing camera
+        sp.position.copy(wp);
+        // scale with distance
+        const sc= sp.userData.baseOp*8 * (1 - vis*0.2);
+      });
+    }
+    // sunMesh bloom intensity varies with view
+    const sunM=scene.userData.sunMesh;
+    if(sunM) sunM.material.opacity= 0.72 + sunInView*0.28;
+  }
+
+  // subtle camera roll for dynamism (very small)
+  camera.rotation.z+= Math.sin(t*0.35)*0.0025;
+
+  // --- loop fade to hide hard reset ---
+  // create vignette fade near wrap
+  const wrapFade = (()=>{
+    if(t<0.45) return smoothstep(t/0.45);
+    if(t> DURATION-0.45) return smoothstep((DURATION-t)/0.45);
+    return 1;
+  })();
+  // we modulate exposure / overlay via renderer? Instead adjust scene fog? Simplest adjust overlay opacity via CSS vignette
+  document.getElementById('vignette').style.opacity= String( 1 - wrapFade*0.0 ); // keep visible but adjust if needed
+  // also add black overlay for seam: use body background? We'll just modulate renderer toneMappingExposure slightly
+  renderer.toneMappingExposure= 1.12 * (0.72 + 0.28*wrapFade);
+
+}
+
+function animate(now){
+  requestAnimationFrame(animate);
+  const sec= now*0.001;
+  updateScene(sec);
+  if(useComposer && composer) composer.render();
+  else renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+
+// ensure meaningful motion within one second: kick startTime to now minus small offset so t starts 0.1
+startTime= performance.now()*0.001 - 0.08;
+
+// handle visibility change to keep deterministic loop?
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden) startTime= performance.now()*0.001 - ( (performance.now()*0.001 - startTime) % DURATION );
+});
+
+</script>
+</body>
+</html>

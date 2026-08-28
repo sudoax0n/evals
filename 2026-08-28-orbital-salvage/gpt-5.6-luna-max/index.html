@@ -1,0 +1,1097 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Orbital Salvage</title>
+  <style>
+    :root { color-scheme: dark; background: #010308; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #010308; }
+    body { display: grid; place-items: center; }
+    #frame {
+      position: relative;
+      width: min(100vw, 177.7778vh);
+      height: min(100vh, 56.25vw);
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #010308;
+      isolation: isolate;
+    }
+    #frame canvas { display: block; width: 100%; height: 100%; }
+    #fade {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      pointer-events: none;
+      background: #010308;
+      opacity: 0;
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main id="frame" aria-label="Procedural cinematic orbital salvage mission">
+    <div id="fade"></div>
+  </main>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+    const LOOP_SECONDS = 32;
+    const TAU = Math.PI * 2;
+    const SEED = 260826;
+
+    function seededRandom(seed) {
+      let state = seed >>> 0;
+      return () => {
+        state += 0x6D2B79F5;
+        let value = state;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    const random = seededRandom(SEED);
+    const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const smooth = (a, b, t) => {
+      const u = clamp((t - a) / (b - a));
+      return u * u * (3 - 2 * u);
+    };
+    const smoother = (a, b, t) => {
+      const u = clamp((t - a) / (b - a));
+      return u * u * u * (u * (u * 6 - 15) + 10);
+    };
+    const dampedPulse = (time, rate, phase = 0) => 0.5 + 0.5 * Math.sin(time * rate + phase);
+
+    function cubicBezier(a, b, c, d, t, target = new THREE.Vector3()) {
+      const u = 1 - t;
+      target.set(0, 0, 0);
+      target.addScaledVector(a, u * u * u);
+      target.addScaledVector(b, 3 * u * u * t);
+      target.addScaledVector(c, 3 * u * t * t);
+      target.addScaledVector(d, t * t * t);
+      return target;
+    }
+
+    function makeRadialTexture(centerColor = '#ffffff', edgeColor = 'rgba(0,0,0,0)') {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const context = canvas.getContext('2d');
+      const gradient = context.createRadialGradient(64, 64, 1, 64, 64, 64);
+      gradient.addColorStop(0, centerColor);
+      gradient.addColorStop(0.16, centerColor);
+      gradient.addColorStop(0.48, edgeColor);
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 128, 128);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    function makeEarthTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 768;
+      canvas.height = 384;
+      const context = canvas.getContext('2d');
+      const ocean = context.createLinearGradient(0, 0, 0, canvas.height);
+      ocean.addColorStop(0, '#071c34');
+      ocean.addColorStop(0.52, '#0b3c60');
+      ocean.addColorStop(1, '#041323');
+      context.fillStyle = ocean;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+
+      const continents = [
+        [[0.03,0.30],[0.11,0.22],[0.18,0.24],[0.21,0.34],[0.17,0.42],[0.13,0.53],[0.07,0.50],[0.02,0.42]],
+        [[0.23,0.12],[0.31,0.10],[0.38,0.18],[0.35,0.28],[0.27,0.31],[0.22,0.24]],
+        [[0.30,0.36],[0.39,0.31],[0.45,0.39],[0.42,0.51],[0.35,0.59],[0.29,0.52]],
+        [[0.48,0.20],[0.55,0.13],[0.64,0.16],[0.69,0.27],[0.63,0.35],[0.54,0.32]],
+        [[0.56,0.43],[0.66,0.37],[0.75,0.42],[0.77,0.53],[0.70,0.62],[0.60,0.59],[0.53,0.51]],
+        [[0.78,0.16],[0.88,0.18],[0.96,0.28],[0.92,0.38],[0.83,0.34],[0.77,0.28]],
+        [[0.80,0.65],[0.88,0.61],[0.94,0.70],[0.89,0.81],[0.80,0.77]]
+      ];
+      continents.forEach((shape, index) => {
+        context.beginPath();
+        shape.forEach(([x, y], pointIndex) => {
+          const jitterX = (random() - 0.5) * 0.018;
+          const jitterY = (random() - 0.5) * 0.018;
+          const px = (x + jitterX) * canvas.width;
+          const py = (y + jitterY) * canvas.height;
+          if (pointIndex === 0) context.moveTo(px, py);
+          else context.lineTo(px, py);
+        });
+        context.closePath();
+        context.fillStyle = index % 3 === 0 ? '#315d58' : '#3b6b54';
+        context.fill();
+        context.globalAlpha = 0.28;
+        context.fillStyle = '#a58d5f';
+        context.fill();
+        context.globalAlpha = 1;
+      });
+
+      for (let i = 0; i < 90; i += 1) {
+        const x = random() * canvas.width;
+        const y = (0.16 + random() * 0.68) * canvas.height;
+        const radiusX = (8 + random() * 30) * (1.25 - Math.abs(y / canvas.height - 0.5));
+        const radiusY = 2 + random() * 7;
+        context.fillStyle = random() > 0.55 ? 'rgba(97,150,126,.15)' : 'rgba(3,18,35,.22)';
+        context.beginPath();
+        context.ellipse(x, y, radiusX, radiusY, random() * 0.5, 0, TAU);
+        context.fill();
+      }
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      texture.anisotropy = 2;
+      return texture;
+    }
+
+    function makeCloudTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 768;
+      canvas.height = 384;
+      const context = canvas.getContext('2d');
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < 48; i += 1) {
+        const latitude = (0.12 + random() * 0.76) * canvas.height;
+        const startX = random() * canvas.width;
+        const span = 45 + random() * 230;
+        const thickness = 2 + random() * 7;
+        const alpha = 0.08 + random() * 0.20;
+        context.strokeStyle = `rgba(210,231,238,${alpha})`;
+        context.lineWidth = thickness;
+        context.lineCap = 'round';
+        context.beginPath();
+        for (let j = 0; j <= 12; j += 1) {
+          const x = startX + (j / 12) * span;
+          const y = latitude + Math.sin(j * 0.75 + i) * (3 + random() * 6);
+          if (j === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        }
+        context.stroke();
+        if (i % 3 === 0) {
+          context.strokeStyle = `rgba(245,250,250,${alpha * 0.55})`;
+          context.lineWidth = thickness * 0.45;
+          context.stroke();
+        }
+      }
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearMipmapLinearFilter;
+      return texture;
+    }
+
+    function makeAtmosphereMaterial() {
+      return new THREE.ShaderMaterial({
+        uniforms: { glowColor: { value: new THREE.Color('#2d9dff') } },
+        vertexShader: `
+          varying vec3 vWorldPosition;
+          varying vec3 vWorldNormal;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            vWorldNormal = normalize(mat3(modelMatrix) * normal);
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 glowColor;
+          varying vec3 vWorldPosition;
+          varying vec3 vWorldNormal;
+          void main() {
+            vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
+            float rim = pow(1.0 - max(dot(normalize(vWorldNormal), viewDirection), 0.0), 3.0);
+            float edge = smoothstep(0.02, 0.78, rim);
+            gl_FragColor = vec4(glowColor, edge * 0.52);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.FrontSide,
+        blending: THREE.AdditiveBlending
+      });
+    }
+
+    function makeMetalMaterial(color, roughness = 0.55, metalness = 0.7) {
+      return new THREE.MeshStandardMaterial({
+        color,
+        roughness,
+        metalness,
+        envMapIntensity: 1.1
+      });
+    }
+
+    function makeGlowMaterial(color, intensity = 2.2) {
+      return new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: intensity,
+        roughness: 0.32,
+        metalness: 0.25
+      });
+    }
+
+    function makeBox(size, material, position = [0, 0, 0]) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+      mesh.position.set(...position);
+      return mesh;
+    }
+
+    function makeGlowSprite(texture, color, scale, opacity = 1) {
+      const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: texture,
+        color,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        depthTest: false,
+        blending: THREE.AdditiveBlending
+      }));
+      sprite.scale.setScalar(scale);
+      return sprite;
+    }
+
+    const frame = document.getElementById('frame');
+    const fade = document.getElementById('fade');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#01050c');
+    scene.fog = new THREE.FogExp2('#020811', 0.0027);
+
+    const camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.08, 260);
+    camera.position.set(8, 5, 12);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+    renderer.setSize(frame.clientWidth, frame.clientHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    renderer.shadowMap.enabled = false;
+    frame.insertBefore(renderer.domElement, fade);
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(frame.clientWidth, frame.clientHeight), 0.75, 0.72, 0.72);
+    bloom.threshold = 0.78;
+    bloom.strength = 0.72;
+    bloom.radius = 0.72;
+    composer.addPass(bloom);
+
+    const ambient = new THREE.HemisphereLight('#3a5d88', '#02050a', 0.68);
+    scene.add(ambient);
+    const sunlight = new THREE.DirectionalLight('#ffc18a', 3.1);
+    sunlight.position.set(9, 12, 8);
+    scene.add(sunlight);
+    const coolRim = new THREE.PointLight('#1978c7', 3.2, 44, 2);
+    coolRim.position.set(-10, 7, 10);
+    scene.add(coolRim);
+    const earthFill = new THREE.PointLight('#17456b', 1.6, 35, 2);
+    earthFill.position.set(3, -1, 8);
+    scene.add(earthFill);
+
+    const glowWhite = makeRadialTexture('rgba(255,255,255,1)', 'rgba(120,190,255,.04)');
+    const glowBlue = makeRadialTexture('rgba(140,225,255,1)', 'rgba(25,120,255,.18)');
+    const glowOrange = makeRadialTexture('rgba(255,246,212,1)', 'rgba(255,106,32,.28)');
+    const glowRed = makeRadialTexture('rgba(255,170,110,1)', 'rgba(255,32,12,.18)');
+    const glowGreen = makeRadialTexture('rgba(220,255,230,1)', 'rgba(20,255,120,.14)');
+
+    // Earth, cloud bands, atmosphere, and a low sunrise disc form the orbital backdrop.
+    const earthCenter = new THREE.Vector3(0, -25, -20);
+    const earthRadius = 25;
+    const earth = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius, 64, 32),
+      new THREE.MeshStandardMaterial({
+        map: makeEarthTexture(),
+        roughness: 0.92,
+        metalness: 0.02,
+        color: '#8caabe',
+        emissive: '#020d1c',
+        emissiveIntensity: 0.22
+      })
+    );
+    earth.position.copy(earthCenter);
+    scene.add(earth);
+
+    const cloudTexture = makeCloudTexture();
+    const clouds = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius + 0.12, 64, 32),
+      new THREE.MeshPhongMaterial({
+        map: cloudTexture,
+        transparent: true,
+        opacity: 0.46,
+        depthWrite: false,
+        color: '#bedce6',
+        shininess: 18
+      })
+    );
+    clouds.position.copy(earthCenter);
+    clouds.renderOrder = 2;
+    scene.add(clouds);
+
+    const atmosphere = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius + 0.52, 64, 32),
+      makeAtmosphereMaterial()
+    );
+    atmosphere.position.copy(earthCenter);
+    atmosphere.renderOrder = 3;
+    scene.add(atmosphere);
+
+    const sunrisePosition = new THREE.Vector3(7.6, 0.85, -3.8);
+    const sunriseHalo = makeGlowSprite(glowOrange, '#ff974d', 8.5, 0.44);
+    sunriseHalo.position.copy(sunrisePosition);
+    sunriseHalo.renderOrder = 5;
+    scene.add(sunriseHalo);
+    const sunriseDisc = makeGlowSprite(glowWhite, '#ffd8a1', 2.0, 0.94);
+    sunriseDisc.position.copy(sunrisePosition);
+    sunriseDisc.renderOrder = 6;
+    scene.add(sunriseDisc);
+
+    const lensFlare = new THREE.Group();
+    const flarePieces = [
+      { distance: 0.23, scale: 0.56, color: '#ffb268', opacity: 0.16 },
+      { distance: 0.43, scale: 0.28, color: '#75baff', opacity: 0.12 },
+      { distance: 0.64, scale: 0.18, color: '#ffc783', opacity: 0.11 }
+    ].map((spec) => {
+      const sprite = makeGlowSprite(glowOrange, spec.color, spec.scale, spec.opacity);
+      sprite.userData.distance = spec.distance;
+      lensFlare.add(sprite);
+      return sprite;
+    });
+    scene.add(lensFlare);
+
+    // A deterministic star field with no input-driven camera or simulation state.
+    const starPositions = [];
+    const starColors = [];
+    for (let i = 0; i < 980; i += 1) {
+      const radius = 82 + random() * 44;
+      const theta = random() * TAU;
+      const phi = Math.acos(1 - random() * 2);
+      starPositions.push(
+        Math.sin(phi) * Math.cos(theta) * radius,
+        Math.cos(phi) * radius * 0.82 + 8,
+        Math.sin(phi) * Math.sin(theta) * radius
+      );
+      const tint = random();
+      starColors.push(0.72 + tint * 0.28, 0.82 + tint * 0.18, 1.0);
+    }
+    const starGeometry = new THREE.BufferGeometry();
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+    starGeometry.setAttribute('color', new THREE.Float32BufferAttribute(starColors, 3));
+    const stars = new THREE.Points(starGeometry, new THREE.PointsMaterial({
+      size: 0.11,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.82,
+      depthWrite: false,
+      sizeAttenuation: true,
+      blending: THREE.AdditiveBlending
+    }));
+    stars.renderOrder = -2;
+    scene.add(stars);
+
+    // Restrained floating debris gives the first shot a clear depth cue.
+    const debris = [];
+    const debrisMaterials = [
+      makeMetalMaterial('#65727b', 0.72, 0.78),
+      makeMetalMaterial('#263640', 0.88, 0.55),
+      makeMetalMaterial('#9a704e', 0.76, 0.65),
+      makeMetalMaterial('#476b78', 0.5, 0.65)
+    ];
+    for (let i = 0; i < 24; i += 1) {
+      const size = 0.055 + random() * 0.18;
+      const shape = i % 3 === 0
+        ? new THREE.IcosahedronGeometry(size, 0)
+        : new THREE.BoxGeometry(size * (1 + random() * 2.4), size * (0.6 + random()), size * (0.5 + random() * 1.7));
+      const piece = new THREE.Mesh(shape, debrisMaterials[i % debrisMaterials.length]);
+      const base = new THREE.Vector3(
+        -7 + random() * 17,
+        1.2 + random() * 8.2,
+        1.5 + random() * 12
+      );
+      piece.userData.base = base;
+      piece.userData.amplitude = new THREE.Vector3(0.15 + random() * 0.65, 0.12 + random() * 0.5, 0.16 + random() * 0.7);
+      piece.userData.phase = random() * TAU;
+      piece.userData.rate = 0.7 + random() * 1.6;
+      debris.push(piece);
+      scene.add(piece);
+    }
+
+    // Satellite construction.
+    const satellite = new THREE.Group();
+    satellite.position.set(0, 4, 0);
+    scene.add(satellite);
+    const satelliteHullMaterial = makeMetalMaterial('#65717a', 0.46, 0.86);
+    satelliteHullMaterial.emissive.set('#0a141c');
+    satelliteHullMaterial.emissiveIntensity = 0.48;
+    const satelliteEdgeMaterial = makeMetalMaterial('#a8b2b1', 0.38, 0.9);
+    const darkMaterial = makeMetalMaterial('#121e27', 0.7, 0.72);
+    const charredMaterial = makeGlowMaterial('#6b271b', 0.5);
+    const goldMaterial = makeMetalMaterial('#c39a55', 0.3, 0.86);
+    const panelMaterial = new THREE.MeshStandardMaterial({
+      color: '#235c82',
+      roughness: 0.44,
+      metalness: 0.5,
+      emissive: '#06294a',
+      emissiveIntensity: 0.72
+    });
+    const panelLineMaterial = makeMetalMaterial('#b79556', 0.35, 0.74);
+
+    const bus = new THREE.Group();
+    satellite.add(bus);
+    bus.add(makeBox([2.4, 1.25, 1.45], satelliteHullMaterial));
+    bus.add(makeBox([1.65, 0.13, 1.53], satelliteEdgeMaterial, [0, 0.59, 0]));
+    bus.add(makeBox([1.85, 0.11, 1.52], darkMaterial, [0, -0.59, 0]));
+    bus.add(makeBox([0.14, 1.05, 1.53], satelliteEdgeMaterial, [-0.89, 0, 0]));
+    bus.add(makeBox([0.14, 1.05, 1.53], satelliteEdgeMaterial, [0.89, 0, 0]));
+
+    const busCornerStruts = [];
+    [-1, 1].forEach((x) => {
+      [-1, 1].forEach((z) => {
+        const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.05, 8), satelliteEdgeMaterial);
+        strut.position.set(x * 0.98, 0, z * 0.62);
+        bus.add(strut);
+        busCornerStruts.push(strut);
+      });
+    });
+
+    // Communications dish, low-poly on purpose for a PS2-era silhouette.
+    const dishAssembly = new THREE.Group();
+    dishAssembly.position.set(-0.12, 0.02, 0.83);
+    dishAssembly.rotation.x = 0.03;
+    bus.add(dishAssembly);
+    const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.94, 0.20, 0.24, 20, 1, true), satelliteEdgeMaterial);
+    dish.rotation.x = Math.PI / 2;
+    dishAssembly.add(dish);
+    const dishInner = new THREE.Mesh(new THREE.CylinderGeometry(0.78, 0.13, 0.05, 20, 1, true), darkMaterial);
+    dishInner.rotation.x = Math.PI / 2;
+    dishInner.position.z = 0.13;
+    dishAssembly.add(dishInner);
+    const dishRim = new THREE.Mesh(new THREE.TorusGeometry(0.83, 0.055, 8, 20), goldMaterial);
+    dishRim.rotation.x = Math.PI / 2;
+    dishRim.position.z = 0.15;
+    dishAssembly.add(dishRim);
+    const dishBoom = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.92, 8), satelliteEdgeMaterial);
+    dishBoom.rotation.x = Math.PI / 2;
+    dishBoom.position.z = 0.55;
+    dishAssembly.add(dishBoom);
+    const dishFeed = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 6), makeGlowMaterial('#80d7ef', 1.8));
+    dishFeed.position.z = 1.03;
+    dishAssembly.add(dishFeed);
+    const dishFeedGlow = makeGlowSprite(glowBlue, '#3eb9ff', 0.42, 0.5);
+    dishFeedGlow.position.z = 1.03;
+    dishAssembly.add(dishFeedGlow);
+
+    function makeSolarArray(side) {
+      const pivot = new THREE.Group();
+      pivot.position.set(side * 1.28, 0, 0);
+      pivot.rotation.z = side * 1.16;
+      satellite.add(pivot);
+      const boom = new THREE.Mesh(new THREE.BoxGeometry(2.85, 0.075, 0.11), goldMaterial);
+      boom.position.x = side * 1.42;
+      pivot.add(boom);
+      for (let i = 0; i < 4; i += 1) {
+        const cell = new THREE.Group();
+        cell.position.set(side * (0.42 + i * 0.78), 0, 0);
+        pivot.add(cell);
+        cell.add(new THREE.Mesh(new THREE.BoxGeometry(0.71, 1.02, 0.075), panelMaterial));
+        const vertical = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.95, 0.014), panelLineMaterial);
+        vertical.position.z = 0.047;
+        cell.add(vertical);
+        const horizontalA = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.025, 0.016), panelLineMaterial);
+        horizontalA.position.set(0, 0.25, 0.048);
+        cell.add(horizontalA);
+        const horizontalB = horizontalA.clone();
+        horizontalB.position.y = -0.25;
+        cell.add(horizontalB);
+        const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.20, 8), goldMaterial);
+        hinge.rotation.z = Math.PI / 2;
+        hinge.position.set(-side * 0.4, 0, 0.02);
+        cell.add(hinge);
+      }
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.1, 0.12), goldMaterial);
+      tip.position.x = side * 3.58;
+      pivot.add(tip);
+      return pivot;
+    }
+
+    const leftArray = makeSolarArray(-1);
+    const rightArray = makeSolarArray(1);
+
+    // Docking target on the satellite's starboard side, with two visible latch pads.
+    const dockPort = new THREE.Group();
+    dockPort.position.set(1.13, 0.03, 0.12);
+    bus.add(dockPort);
+    const portCylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.19, 12), darkMaterial);
+    portCylinder.rotation.z = Math.PI / 2;
+    dockPort.add(portCylinder);
+    const portRing = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.042, 8, 16), goldMaterial);
+    portRing.rotation.y = Math.PI / 2;
+    portRing.position.x = 0.11;
+    dockPort.add(portRing);
+    [-1, 1].forEach((side) => {
+      const latch = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.18, 0.14), satelliteEdgeMaterial);
+      latch.position.set(0.10, side * 0.37, 0.33);
+      bus.add(latch);
+    });
+
+    // Damaged power coupler, the visual anchor for the drone close-up.
+    const couplerLocal = new THREE.Vector3(0.72, 0.48, 0.73);
+    const couplerMount = new THREE.Group();
+    couplerMount.position.copy(couplerLocal);
+    bus.add(couplerMount);
+    couplerMount.add(makeBox([0.52, 0.34, 0.18], darkMaterial));
+    const couplerRing = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.045, 8, 12), charredMaterial);
+    couplerRing.rotation.x = Math.PI / 2;
+    couplerRing.position.z = 0.12;
+    couplerMount.add(couplerRing);
+    const brokenPart = new THREE.Group();
+    brokenPart.position.set(0, 0, 0.19);
+    couplerMount.add(brokenPart);
+    brokenPart.add(makeBox([0.30, 0.19, 0.17], charredMaterial));
+    const brokenEdge = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.04, 0.19), makeGlowMaterial('#d04424', 1.4));
+    brokenEdge.position.y = 0.10;
+    brokenPart.add(brokenEdge);
+    const scorch = makeGlowSprite(glowRed, '#ff3b18', 0.58, 0.36);
+    scorch.position.set(0.03, 0.02, 0.24);
+    couplerMount.add(scorch);
+
+    // Status beacons begin red and switch to a steady green after the new coupler is seated.
+    const warningBeacons = [];
+    const redBeaconMaterial = makeGlowMaterial('#ef3c29', 2.6);
+    const greenBeaconMaterial = makeGlowMaterial('#46ff9a', 2.7);
+    const redBeaconColor = new THREE.Color('#ef3c29');
+    const greenBeaconColor = new THREE.Color('#46ff9a');
+    const redBeaconTexture = makeRadialTexture('rgba(255,230,220,1)', 'rgba(255,20,15,.25)');
+    const greenBeaconTexture = makeRadialTexture('rgba(228,255,238,1)', 'rgba(0,255,120,.24)');
+    [[-0.84,0.48,0.70],[0.84,0.48,0.70],[-0.84,-0.48,0.70],[0.84,-0.48,0.70]].forEach((position) => {
+      const beacon = new THREE.Group();
+      beacon.position.set(...position);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), redBeaconMaterial);
+      beacon.add(lamp);
+      const halo = makeGlowSprite(redBeaconTexture, '#ff3c2c', 0.30, 0.78);
+      beacon.add(halo);
+      satellite.add(beacon);
+      warningBeacons.push({ beacon, lamp, halo });
+    });
+
+    const installedModule = new THREE.Group();
+    installedModule.position.copy(couplerLocal).add(new THREE.Vector3(0, 0, 0.20));
+    installedModule.visible = false;
+    bus.add(installedModule);
+    const installedBody = makeBox([0.32, 0.20, 0.18], makeGlowMaterial('#52ffc2', 3.2));
+    installedModule.add(installedBody);
+    const installedStripe = makeBox([0.34, 0.035, 0.19], makeGlowMaterial('#c4ffe0', 3.8), [0, 0.11, 0]);
+    installedModule.add(installedStripe);
+    const moduleHalo = makeGlowSprite(glowGreen, '#37ff9a', 0.75, 0.64);
+    moduleHalo.position.z = 0.18;
+    installedModule.add(moduleHalo);
+    const moduleLight = new THREE.PointLight('#35ff98', 0, 4.5, 2);
+    moduleLight.position.copy(installedModule.position);
+    bus.add(moduleLight);
+
+    // Repair sparks are a fixed line pattern with deterministic flicker, not a random particle system.
+    const sparkGroup = new THREE.Group();
+    sparkGroup.position.copy(couplerLocal).add(new THREE.Vector3(0, 0, 0.25));
+    bus.add(sparkGroup);
+    const sparkMaterial = new THREE.LineBasicMaterial({ color: '#ff8a43', transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending });
+    const sparks = [];
+    for (let i = 0; i < 13; i += 1) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+      const line = new THREE.Line(geometry, sparkMaterial);
+      line.userData.phase = random() * TAU;
+      line.userData.angle = random() * TAU;
+      line.userData.length = 0.12 + random() * 0.26;
+      sparkGroup.add(line);
+      sparks.push(line);
+    }
+
+    // Service spacecraft.
+    const craft = new THREE.Group();
+    scene.add(craft);
+    const craftHull = makeMetalMaterial('#85929a', 0.4, 0.9);
+    craftHull.emissive.set('#0b1820');
+    craftHull.emissiveIntensity = 0.58;
+    const craftDark = makeMetalMaterial('#17232b', 0.72, 0.8);
+    const craftGold = makeMetalMaterial('#d0a15d', 0.31, 0.86);
+    const craftWindow = makeGlowMaterial('#1f7fa4', 1.5);
+    craft.add(makeBox([1.85, 0.90, 0.92], craftHull));
+    craft.add(makeBox([1.12, 0.14, 1.02], craftGold, [0.22, 0.47, 0]));
+    craft.add(makeBox([1.30, 0.10, 0.98], craftDark, [0.18, -0.47, 0]));
+    const craftNose = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.34, 8), craftHull);
+    craftNose.rotation.z = Math.PI / 2;
+    craftNose.position.x = -1.02;
+    craft.add(craftNose);
+    const craftWindowMesh = makeBox([0.18, 0.48, 0.56], craftWindow, [-0.80, 0.12, 0]);
+    craft.add(craftWindowMesh);
+    const craftStripe = makeBox([0.76, 0.08, 0.96], craftGold, [0.62, 0, 0]);
+    craft.add(craftStripe);
+    const rearEngineRing = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.43, 0.25, 10), craftDark);
+    rearEngineRing.rotation.z = Math.PI / 2;
+    rearEngineRing.position.x = 1.02;
+    craft.add(rearEngineRing);
+    const rearEngineCore = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.27, 10), makeGlowMaterial('#75d9ff', 2.4));
+    rearEngineCore.rotation.z = Math.PI / 2;
+    rearEngineCore.position.x = 1.16;
+    craft.add(rearEngineCore);
+    const craftWing = makeBox([0.92, 0.08, 0.12], craftGold, [0.38, 0, 0.66]);
+    craft.add(craftWing);
+    craft.add(craftWing.clone()).position.z = -0.66;
+
+    function addThruster(parent, position, direction, color, phase) {
+      const group = new THREE.Group();
+      group.position.copy(position);
+      group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+      const flameMaterial = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.82, blending: THREE.AdditiveBlending, depthWrite: false });
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.72, 8, 1, true), flameMaterial);
+      flame.position.y = 0.36;
+      group.add(flame);
+      const flare = makeGlowSprite(glowBlue, color, 0.52, 0.62);
+      flare.position.y = 0.66;
+      group.add(flare);
+      group.userData = { flame, flare, phase };
+      parent.add(group);
+      return group;
+    }
+
+    const thrusters = [];
+    thrusters.push(addThruster(craft, [1.12, 0.30, 0.31], new THREE.Vector3(1, 0, 0), '#57d9ff', 0.1));
+    thrusters.push(addThruster(craft, [1.12, -0.30, 0.31], new THREE.Vector3(1, 0, 0), '#57d9ff', 1.2));
+    thrusters.push(addThruster(craft, [1.12, 0.30, -0.31], new THREE.Vector3(1, 0, 0), '#57d9ff', 2.2));
+    thrusters.push(addThruster(craft, [1.12, -0.30, -0.31], new THREE.Vector3(1, 0, 0), '#57d9ff', 3.3));
+    thrusters.push(addThruster(craft, [-0.40, 0.53, 0.34], new THREE.Vector3(0, 1, 0), '#a1edff', 0.7));
+    thrusters.push(addThruster(craft, [-0.40, -0.53, -0.34], new THREE.Vector3(0, -1, 0), '#a1edff', 2.8));
+
+    const craftNavTexture = makeRadialTexture('rgba(205,250,255,1)', 'rgba(40,160,255,.20)');
+    const craftNavLights = [];
+    [[-0.35,0.50,0.47],[0.78,0.50,-0.47]].forEach((position, index) => {
+      const nav = makeGlowSprite(craftNavTexture, index === 0 ? '#77eaff' : '#4c9dff', 0.28, 0.78);
+      nav.position.set(...position);
+      craft.add(nav);
+      craftNavLights.push(nav);
+    });
+
+    // Two extendable mechanical arms and pulsing magnetic clamps.
+    const armMaterial = makeMetalMaterial('#aeb7b7', 0.35, 0.88);
+    armMaterial.emissive.set('#2a454a');
+    armMaterial.emissiveIntensity = 0.62;
+    const clampMaterial = makeGlowMaterial('#79ddff', 2.0);
+    clampMaterial.transparent = true;
+    const arms = [];
+    [-1, 1].forEach((side) => {
+      const arm = new THREE.Group();
+      arm.position.set(-0.65, side * 0.42, 0.33);
+      const upper = makeBox([0.38, 0.10, 0.10], armMaterial, [-0.18, 0, 0]);
+      arm.add(upper);
+      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 6), armMaterial);
+      elbow.position.x = -0.38;
+      arm.add(elbow);
+      const forearm = makeBox([0.24, 0.085, 0.085], armMaterial, [-0.46, 0, 0]);
+      arm.add(forearm);
+      const clamp = new THREE.Group();
+      clamp.position.x = -0.60;
+      const pad = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.035, 6, 12), clampMaterial);
+      pad.rotation.y = Math.PI / 2;
+      clamp.add(pad);
+      const magnet = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), clampMaterial);
+      magnet.position.x = -0.02;
+      clamp.add(magnet);
+      const clampGlow = makeGlowSprite(glowBlue, '#54d7ff', 0.46, 0.65);
+      clampGlow.position.x = -0.05;
+      clamp.add(clampGlow);
+      arm.add(clamp);
+      craft.add(arm);
+      arms.push({ arm, clamp, pad, clampGlow });
+    });
+
+    const dockPulse = new THREE.Group();
+    craft.add(dockPulse);
+    const dockPulseRings = [0, 1].map((index) => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.33 + index * 0.07, 0.018, 6, 24), clampMaterial);
+      ring.rotation.y = Math.PI / 2;
+      ring.position.set(-1.08, 0, 0.33);
+      ring.visible = false;
+      dockPulse.add(ring);
+      return ring;
+    });
+
+    // Repair drone and the replacement module it carries.
+    const drone = new THREE.Group();
+    scene.add(drone);
+    const droneHull = makeMetalMaterial('#9aa8ae', 0.43, 0.84);
+    droneHull.emissive.set('#14353d');
+    droneHull.emissiveIntensity = 0.74;
+    const droneDark = makeMetalMaterial('#1a2a33', 0.66, 0.74);
+    drone.add(makeBox([0.38, 0.27, 0.31], droneHull));
+    drone.add(makeBox([0.20, 0.08, 0.35], droneDark, [0.05, 0, 0]));
+    const droneEye = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), makeGlowMaterial('#6feaff', 2.7));
+    droneEye.position.x = -0.21;
+    drone.add(droneEye);
+    const droneEyeGlow = makeGlowSprite(glowBlue, '#53dcff', 0.28, 0.72);
+    droneEyeGlow.position.x = -0.21;
+    drone.add(droneEyeGlow);
+    const droneTopPanel = makeBox([0.22, 0.045, 0.23], makeGlowMaterial('#267b91', 1.35), [0.02, 0.155, 0]);
+    drone.add(droneTopPanel);
+    const droneToolLight = makeGlowSprite(glowBlue, '#63e7ff', 0.30, 0.68);
+    droneToolLight.position.set(-0.29, -0.04, 0);
+    drone.add(droneToolLight);
+    const droneArmMaterial = makeMetalMaterial('#bbc3bf', 0.34, 0.88);
+    [-1, 1].forEach((side) => {
+      const pincer = new THREE.Group();
+      pincer.position.set(-0.20, side * 0.13, 0);
+      pincer.add(makeBox([0.25, 0.045, 0.045], droneArmMaterial, [-0.12, side * 0.06, 0]));
+      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.045, 7, 5), makeGlowMaterial('#f4c76c', 1.2));
+      tip.position.x = -0.26;
+      pincer.add(tip);
+      drone.add(pincer);
+    });
+    const droneThrusterSprites = [];
+    [[0.20,0.12,0.14],[0.20,-0.12,-0.14]].forEach((position) => {
+      const sprite = makeGlowSprite(glowBlue, '#4acbff', 0.25, 0.68);
+      sprite.position.set(...position);
+      drone.add(sprite);
+      droneThrusterSprites.push(sprite);
+    });
+    const heldModule = new THREE.Group();
+    heldModule.position.set(-0.22, -0.19, 0);
+    drone.add(heldModule);
+    const heldModuleBody = makeBox([0.28, 0.18, 0.19], makeGlowMaterial('#55ffc0', 3.1));
+    heldModule.add(heldModuleBody);
+    heldModule.add(makeBox([0.30, 0.028, 0.20], makeGlowMaterial('#d1ffdf', 3.8), [0, 0.095, 0]));
+    const heldModuleGlow = makeGlowSprite(glowGreen, '#48ffa5', 0.60, 0.68);
+    heldModuleGlow.position.z = 0.15;
+    heldModule.add(heldModuleGlow);
+
+    const satelliteDockLocal = new THREE.Vector3(2.22, 0.01, 0.10);
+    const droneBayLocal = new THREE.Vector3(1.92, -0.48, -0.02);
+    const droneCraftBayLocal = new THREE.Vector3(-0.30, -0.49, -0.12);
+    const droneLaunchLocal = new THREE.Vector3(1.58, -0.25, 0.40);
+    const couplerApproachLocal = couplerLocal.clone().add(new THREE.Vector3(0.58, 0.34, 0.46));
+    const pathScratch = new THREE.Vector3();
+    const craftStart = new THREE.Vector3(8.5, 5.6, 10.7);
+    const craftControlA = new THREE.Vector3(7.1, 5.2, 8.0);
+    const craftControlB = new THREE.Vector3(4.4, 4.35, 2.0);
+    const satQuaternion = new THREE.Quaternion();
+    const dockWorld = new THREE.Vector3();
+
+    function satelliteLocalToWorld(local, target = new THREE.Vector3()) {
+      target.copy(local);
+      return satellite.localToWorld(target);
+    }
+
+    function updateSatellite(time) {
+      const spinStopStart = 16.15;
+      const spinStopEnd = 17.65;
+      const spinTime = Math.min(time, spinStopStart);
+      const movingX = 0.20 + spinTime * 0.78;
+      const movingY = -0.31 + spinTime * 0.56;
+      const movingZ = 0.10 + spinTime * 0.37;
+      const stopX = 0.20 + spinStopStart * 0.78;
+      const stopY = -0.31 + spinStopStart * 0.56;
+      const stopZ = 0.10 + spinStopStart * 0.37;
+      const settle = smooth(spinStopStart, spinStopEnd, time);
+      satellite.rotation.order = 'YXZ';
+      satellite.rotation.set(
+        lerp(movingX, stopX, settle),
+        lerp(movingY, stopY, settle),
+        lerp(movingZ, stopZ, settle)
+      );
+      const deploy = smoother(18.0, 23.7, time);
+      leftArray.rotation.z = lerp(-1.16, 0, deploy);
+      rightArray.rotation.z = lerp(1.16, 0, deploy);
+      satellite.updateMatrixWorld(true);
+      satQuaternion.copy(satellite.quaternion);
+    }
+
+    function updateCraft(time) {
+      satelliteLocalToWorld(satelliteDockLocal, dockWorld);
+      const approach = smoother(0.0, 8.35, time);
+      cubicBezier(craftStart, craftControlA, craftControlB, dockWorld, approach, pathScratch);
+      craft.position.copy(pathScratch);
+      const direction = dockWorld.clone().sub(craft.position);
+      if (direction.lengthSq() < 0.0001) direction.set(-1, 0, 0);
+      direction.normalize();
+      const pathQuaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(-1, 0, 0), direction);
+      const dockingQuaternion = satQuaternion.clone();
+      const match = smooth(4.2, 8.35, time);
+      craft.quaternion.copy(pathQuaternion).slerp(dockingQuaternion, match);
+      if (time >= 8.35) {
+        craft.position.copy(dockWorld);
+        craft.quaternion.copy(dockingQuaternion);
+      }
+
+      const armProgress = smoother(8.25, 10.05, time);
+      arms.forEach(({ arm, clampGlow }, index) => {
+        const reach = 0.10 + 0.90 * armProgress;
+        arm.scale.x = reach;
+        const clampPulse = smooth(9.12, 9.72, time) * (1 - smooth(10.05, 10.78, time));
+        clampGlow.material.opacity = 0.32 + clampPulse * (0.52 + 0.22 * dampedPulse(time, 11, index));
+        clampGlow.scale.setScalar(0.36 + clampPulse * 0.28);
+      });
+      const pulse = smooth(9.0, 9.5, time) * (1 - smooth(9.62, 10.4, time));
+      dockPulseRings.forEach((ring, index) => {
+        ring.visible = pulse > 0.01;
+        const wave = clamp(pulse * (1.08 - index * 0.18));
+        ring.scale.setScalar(0.55 + wave * (1.2 + index * 0.55));
+        ring.material.opacity = 0.8 * (1 - clamp(wave));
+      });
+
+      const approachThrust = 0.27 + 0.34 * (1 - smooth(5.9, 8.25, time));
+      const dockingThrust = smooth(8.15, 8.95, time) * (1 - smooth(9.05, 10.2, time));
+      const stabilizationThrust = 0.16 * smooth(12.0, 16.0, time) * (1 - smooth(16.0, 18.0, time));
+      const thrust = approachThrust + dockingThrust * 0.75 + stabilizationThrust + 0.10 * dampedPulse(time, 3.4);
+      thrusters.forEach((thruster, index) => {
+        const { flame, flare, phase } = thruster.userData;
+        const strength = clamp(thrust * (0.62 + 0.38 * dampedPulse(time, 7.0, phase + index)));
+        flame.scale.set(0.72 + strength * 0.75, 0.62 + strength * 0.96, 0.72 + strength * 0.75);
+        flame.material.opacity = 0.38 + strength * 0.48;
+        flare.scale.setScalar(0.24 + strength * 0.30);
+        flare.material.opacity = 0.25 + strength * 0.40;
+      });
+      craftNavLights.forEach((light, index) => {
+        light.material.opacity = 0.58 + 0.34 * dampedPulse(time, 4.4, index * 1.4);
+      });
+      craft.updateMatrixWorld(true);
+    }
+
+    function updateDrone(time) {
+      let localPosition = droneBayLocal.clone();
+      const droneFollowsCraft = time < 8.35;
+      if (droneFollowsCraft) {
+        const craftBayWorld = craft.localToWorld(droneCraftBayLocal.clone());
+        drone.position.copy(craftBayWorld);
+      } else if (time < 11.35) {
+        localPosition.copy(droneBayLocal);
+      } else if (time >= 11.35 && time < 12.75) {
+        const u = smoother(11.35, 12.75, time);
+        localPosition = cubicBezier(droneBayLocal, new THREE.Vector3(1.90, -0.44, 0.18), droneLaunchLocal, droneLaunchLocal, u, localPosition);
+      } else if (time < 14.65) {
+        const u = smoother(12.75, 14.65, time);
+        localPosition = cubicBezier(droneLaunchLocal, new THREE.Vector3(1.65, 0.42, 0.90), new THREE.Vector3(1.14, 0.65, 1.10), couplerApproachLocal, u, localPosition);
+      } else if (time < 16.85) {
+        localPosition.copy(couplerApproachLocal);
+        localPosition.x += Math.sin(time * 12.0) * 0.025;
+        localPosition.y += Math.cos(time * 10.0) * 0.018;
+      } else if (time < 18.25) {
+        const u = smoother(16.85, 18.25, time);
+        localPosition = cubicBezier(couplerApproachLocal, new THREE.Vector3(1.2, 0.55, 1.05), new THREE.Vector3(1.75, -0.18, 0.50), droneBayLocal, u, localPosition);
+      } else {
+        localPosition.copy(droneBayLocal);
+      }
+      if (!droneFollowsCraft) satelliteLocalToWorld(localPosition, drone.position);
+      drone.quaternion.copy(droneFollowsCraft ? craft.quaternion : satQuaternion);
+      drone.rotateY(-0.18);
+      const droneActive = time >= 11.35 && time < 18.25;
+      drone.visible = true;
+      heldModule.visible = time >= 12.25 && time < 16.15;
+      const droneThrust = droneActive ? 0.54 + 0.22 * dampedPulse(time, 9.2) : 0.16;
+      droneThrusterSprites.forEach((sprite, index) => {
+        sprite.material.opacity = 0.22 + droneThrust * (0.34 + 0.12 * dampedPulse(time, 8, index));
+        sprite.scale.setScalar(0.16 + droneThrust * 0.15);
+      });
+      drone.updateMatrixWorld(true);
+
+      const removeStart = 14.65;
+      const removeEnd = 15.65;
+      if (time < removeStart) {
+        brokenPart.visible = true;
+        brokenPart.position.set(0, 0, 0.19);
+      } else if (time < removeEnd) {
+        brokenPart.visible = true;
+        const u = smoother(removeStart, removeEnd, time);
+        const droneInCoupler = new THREE.Vector3();
+        couplerMount.worldToLocal(droneInCoupler.copy(drone.position));
+        brokenPart.position.lerpVectors(new THREE.Vector3(0, 0, 0.19), droneInCoupler.add(new THREE.Vector3(-0.12, 0.05, 0.04)), u);
+      } else {
+        brokenPart.visible = false;
+        brokenPart.position.set(0, 0, 0.19);
+      }
+
+      const install = smoother(15.58, 16.65, time);
+      installedModule.visible = time >= 15.58;
+      installedModule.scale.setScalar(clamp(install));
+      moduleLight.intensity = 4.0 * clamp(install);
+      const healthy = smooth(16.15, 16.95, time);
+      warningBeacons.forEach(({ lamp, halo }, index) => {
+        const pulse = healthy > 0.98 ? 1 : 0.34 + 0.60 * dampedPulse(time, 7.5, index * 0.6);
+        lamp.material.color.lerpColors(redBeaconColor, greenBeaconColor, healthy);
+        lamp.material.emissive.lerpColors(redBeaconColor, greenBeaconColor, healthy);
+        lamp.material.emissiveIntensity = lerp(2.3 + pulse * 1.8, 2.55, healthy);
+        halo.material.color.lerpColors(redBeaconColor, greenBeaconColor, healthy);
+        halo.material.map = healthy > 0.5 ? greenBeaconTexture : redBeaconTexture;
+        halo.material.opacity = 0.46 + pulse * 0.36;
+      });
+      const sparkLife = 1 - smooth(15.85, 16.95, time);
+      sparkGroup.visible = sparkLife > 0.01;
+      sparkMaterial.opacity = 0.25 + sparkLife * 0.62;
+      sparks.forEach((line, index) => {
+        const positions = line.geometry.attributes.position.array;
+        const angle = line.userData.angle + time * 0.9;
+        const flicker = 0.55 + 0.45 * dampedPulse(time, 18, line.userData.phase);
+        const length = line.userData.length * flicker * sparkLife;
+        const startRadius = 0.08 + 0.035 * dampedPulse(time, 9, index);
+        const sx = Math.cos(angle) * startRadius;
+        const sy = Math.sin(angle) * startRadius;
+        const sz = 0.02 * Math.sin(angle * 2.3);
+        const ex = sx + Math.cos(angle + 0.55) * length;
+        const ey = sy + Math.sin(angle + 0.55) * length;
+        const ez = sz + (index % 2 ? 0.08 : -0.08) * flicker;
+        positions[0] = sx; positions[1] = sy; positions[2] = sz;
+        positions[3] = ex; positions[4] = ey; positions[5] = ez;
+        line.geometry.attributes.position.needsUpdate = true;
+      });
+      scorch.material.opacity = 0.06 + sparkLife * 0.32;
+    }
+
+    const cameraTarget = new THREE.Vector3();
+    const cameraPosition = new THREE.Vector3();
+    const satelliteWorld = new THREE.Vector3();
+    const droneWorld = new THREE.Vector3();
+    const couplerWorld = new THREE.Vector3();
+
+    function updateCamera(time) {
+      satellite.getWorldPosition(satelliteWorld);
+      drone.getWorldPosition(droneWorld);
+      satelliteLocalToWorld(couplerLocal, couplerWorld);
+      let shot = 0;
+
+      if (time < 5.0) {
+        shot = 1;
+        const u = smooth(0, 5, time);
+        const approachMidpoint = new THREE.Vector3().lerpVectors(craft.position, satelliteWorld, 0.50);
+        cameraPosition.copy(approachMidpoint).add(new THREE.Vector3(5.9 - u * 0.8, -2.0 + u * 0.35, 12.6 - u * 0.8));
+        cameraTarget.lerpVectors(craft.position, satelliteWorld, 0.50);
+        cameraTarget.y += 0.05;
+      } else if (time < 8.35) {
+        shot = 2;
+        const u = smooth(5, 8.35, time);
+        const sideOffset = new THREE.Vector3(6.8 - u * 0.8, 4.1 + u * 0.4, 8.8 - u * 0.7).applyQuaternion(satQuaternion);
+        cameraPosition.copy(satelliteWorld).add(sideOffset);
+        cameraTarget.lerpVectors(craft.position, satelliteWorld, 0.48 + u * 0.10);
+        cameraTarget.y += 0.15;
+      } else if (time < 11.35) {
+        shot = 3;
+        const u = smooth(8.35, 11.35, time);
+        const dockingOffset = new THREE.Vector3(4.85 - u * 0.30, 3.35 + u * 0.25, 7.20 - u * 0.35).applyQuaternion(satQuaternion);
+        cameraPosition.copy(satelliteWorld).add(dockingOffset);
+        cameraTarget.copy(satelliteLocalToWorld(new THREE.Vector3(1.64, 0.04, 0.28)));
+        cameraTarget.y += 0.04;
+      } else if (time < 18.25) {
+        shot = 4;
+        const followOffset = new THREE.Vector3(1.00, 0.85, 1.35).applyQuaternion(satQuaternion);
+        cameraPosition.copy(couplerWorld).add(followOffset);
+        cameraTarget.lerpVectors(couplerWorld, droneWorld, 0.48);
+        cameraTarget.y += 0.05;
+      } else if (time < 25.0) {
+        shot = 5;
+        const u = smooth(18.25, 25, time);
+        const orbitAngle = -0.30 + u * 1.95;
+        const orbitOffset = new THREE.Vector3(Math.cos(orbitAngle) * 14.2, 6.2 + Math.sin(orbitAngle * 1.2) * 1.35, Math.sin(orbitAngle) * 14.2);
+        cameraPosition.copy(satelliteWorld).add(orbitOffset);
+        cameraTarget.copy(satelliteWorld);
+        cameraTarget.y += 0.10;
+      } else {
+        shot = 6;
+        const u = smooth(25, 32, time);
+        cameraPosition.set(10.8 + u * 12.5, 7.0 + u * 6.8, 13.7 + u * 15.8);
+        cameraTarget.copy(satelliteWorld);
+        cameraTarget.y += 0.2;
+        cameraTarget.x += Math.sin(u * Math.PI) * 0.35;
+      }
+
+      camera.position.copy(cameraPosition);
+      const shotFov = shot === 3 ? 50 : (shot === 4 ? 50 : (shot === 5 ? 46 : 42));
+      if (camera.fov !== shotFov) {
+        camera.fov = shotFov;
+        camera.updateProjectionMatrix();
+      }
+      sunlight.intensity = shot === 3 ? 1.35 : (shot === 4 ? 1.85 : 3.1);
+      camera.lookAt(cameraTarget);
+      camera.userData.shot = shot;
+    }
+
+    function updateWorld(time) {
+      earth.rotation.y = 0.10 + 0.065 * Math.sin(TAU * time / LOOP_SECONDS);
+      earth.rotation.x = 0.015 * Math.sin(TAU * time / LOOP_SECONDS * 0.5);
+      clouds.rotation.y = 0.14 + 0.34 * Math.sin(TAU * time / LOOP_SECONDS + 0.45);
+      clouds.rotation.x = 0.01 * Math.sin(TAU * time / LOOP_SECONDS * 0.7);
+      stars.rotation.y = 0.025 * Math.sin(TAU * time / LOOP_SECONDS);
+      stars.material.opacity = 0.76 + 0.09 * dampedPulse(time, 0.8);
+
+      debris.forEach((piece, index) => {
+        const { base, amplitude, phase, rate } = piece.userData;
+        const loopPhase = TAU * time / LOOP_SECONDS * rate + phase;
+        piece.position.set(
+          base.x + Math.sin(loopPhase) * amplitude.x,
+          base.y + Math.sin(loopPhase * 0.77 + 0.6) * amplitude.y,
+          base.z + Math.cos(loopPhase * 0.63) * amplitude.z
+        );
+        piece.rotation.set(
+          phase + time * 0.12 * rate,
+          phase * 0.7 + time * 0.16 * rate,
+          phase * 1.2 + time * 0.10 * rate
+        );
+      });
+      sunriseHalo.material.opacity = 0.37 + 0.07 * dampedPulse(time, 0.55);
+      sunriseDisc.material.opacity = 0.88 + 0.06 * dampedPulse(time, 0.8, 0.4);
+      const flareAxis = camera.position.clone().sub(sunrisePosition).normalize();
+      flarePieces.forEach((sprite) => {
+        sprite.position.copy(sunrisePosition).addScaledVector(flareAxis, sprite.userData.distance * 3.8);
+        sprite.material.opacity = 0.06 + 0.08 * dampedPulse(time, 0.7, sprite.userData.distance * 5);
+      });
+    }
+
+    function updateFade(time) {
+      const fadeIn = 1 - smooth(0.05, 0.62, time);
+      const fadeOut = smooth(31.30, LOOP_SECONDS, time);
+      fade.style.opacity = Math.max(fadeIn, fadeOut).toFixed(3);
+    }
+
+    let startTime = performance.now();
+    function animate(now) {
+      const elapsed = (now - startTime) / 1000;
+      const time = ((elapsed % LOOP_SECONDS) + LOOP_SECONDS) % LOOP_SECONDS;
+      updateSatellite(time);
+      updateCraft(time);
+      updateDrone(time);
+      scene.updateMatrixWorld(true);
+      updateCamera(time);
+      updateWorld(time);
+      updateFade(time);
+      composer.render();
+      requestAnimationFrame(animate);
+    }
+
+    function resize() {
+      const width = frame.clientWidth;
+      const height = frame.clientHeight;
+      renderer.setSize(width, height, false);
+      composer.setSize(width, height);
+      camera.aspect = 16 / 9;
+      camera.updateProjectionMatrix();
+    }
+    window.addEventListener('resize', resize, { passive: true });
+    resize();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
