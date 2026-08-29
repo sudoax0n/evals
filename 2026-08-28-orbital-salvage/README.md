@@ -4,17 +4,18 @@
   <img src="hero.png" alt="A salvage craft and utility drone working between a damaged orbital station and a satellite above Earth at sunrise." width="100%">
 </p>
 
-One prompt, five models, one self-contained HTML file each.
+One prompt, seven model outputs, one self-contained HTML file each.
 
 - Claude Opus 5 Max: [claude-opus-5-max/index.html](claude-opus-5-max/index.html)
 - GPT-5.6 Sol xhigh: [gpt-5.6-sol-xhigh/index.html](gpt-5.6-sol-xhigh/index.html)
 - GPT-5.6 Luna Max: [gpt-5.6-luna-max/index.html](gpt-5.6-luna-max/index.html)
 - Muse Spark 1.2: [muse-spark-1.2/index.html](muse-spark-1.2/index.html)
 - MiniMax M3: [minimax-m3/index.html](minimax-m3/index.html)
+- HY4 Preview: [hy4-preview/index.html](hy4-preview/index.html)
+- GLM-5.3-Flash Max: [glm-5.3-flash-max/index.html](glm-5.3-flash-max/index.html)
 - Exact prompt: [prompt.md](prompt.md)
-- Labeled Opus 5 Max vs Sol xhigh video: [opus-5-max-vs-gpt-5.6-sol-xhigh.mp4](opus-5-max-vs-gpt-5.6-sol-xhigh.mp4)
 
-The original labeled 2×2 recording stays on X. The later Opus 5 Max vs Sol xhigh side-by-side is included here because it is the direct follow-up to this run.
+Videos stay on X. This folder holds the HTML receipts for the original five-model run and the HY4/GLM follow-up.
 
 ## What showed up on screen
 
@@ -28,7 +29,15 @@ The original labeled 2×2 recording stays on X. The later Opus 5 Max vs Sol xhig
 
 **MiniMax M3** established an approach, then lost the active subject in near-empty green frames for roughly ten seconds. The dock, drone repair, state change, and array deployment never formed a readable chain.
 
-Short version: Opus 5 Max made the better film. Sol xhigh made the repair easier to score. Luna Max still separated from Muse Spark and MiniMax M3.
+Original five-model result: Opus 5 Max made the better film. Sol xhigh made the repair easier to score. Luna Max still separated from Muse Spark and MiniMax M3.
+
+## Follow-up: HY4 Preview vs GLM-5.3-Flash Max
+
+**HY4 Preview** made the better film in this recorded run. It sustained the orbital setting through the approach, damaged satellite, service craft, thruster plumes, repair activity, warning lights, and a red-to-green before/after arc. The X edit starts at the first clean frame where the active spacecraft action is readable; the close repair proof is dark and the final repaired subject is small.
+
+**GLM-5.3-Flash Max** loaded and rendered a working scene. The service craft and damaged satellite appeared early, with motion, debris, and thruster activity. Once the camera moved into the repair window, it lost the active subjects for most of the sequence. Docking, grapple contact, coupler replacement, stabilization, and array deployment were not visually readable in the recording.
+
+Follow-up result: HY4 Preview won this run on film and visible task progression.
 
 ## Video alignment
 
@@ -44,11 +53,15 @@ The raw 32-second recordings began late in each authored loop. For the X compari
 
 No frames were dropped. Every aligned pane remains 32.000 seconds, 1,920 frames, and 60fps.
 
+The HY4/GLM follow-up was aligned separately. HY4's technical restart was at 31.550s; GLM begins at authored shot 0. The X edit hard-trims HY4 to 5.700s after alignment, where the first clean spacecraft action is readable, and starts GLM at 0.000s. The final side-by-side stays on X at 1920×640, 60fps, exact 3:1, and 26.300 seconds.
+
 ## Provenance
 
 Abhinav supplied the same Orbital Salvage prompt manually to all five runs. Every clean-workspace input manifest records the same 2,020-byte prompt and SHA-256 `4e6dd75858e0b2c18c6eb35aed5fe2641a07a5181c75bbd9861c37af09162e17`.
 
 Sol's run record identifies `gpt-5.6-sol-xhigh` with the `codex-clean-xhigh-manual-download` harness. Luna, Muse, and MiniMax came from manual Arena downloads. The Opus output was supplied as a finished ZIP; its exact harness was not recorded, so it remains explicitly unspecified rather than guessed. The MiniMax display name follows the operator's run record; its saved manifest label is the literal `m3`.
+
+The HY4/GLM follow-up uses the same frozen prompt. The GLM workspace retained a prepared input manifest with the prompt hash. The HY4 Preview HTML arrived later as a finished output without a matching input manifest, so its prompt provenance is not independently hash-matched here. The model label is the operator's saved label.
 
 The files below are byte-identical copies of the saved model outputs:
 
@@ -59,8 +72,10 @@ The files below are byte-identical copies of the saved model outputs:
 | GPT-5.6 Luna Max | 48,013 | `dea2085cf16166fef95a8f91113bca8772c999d5c5fa7a1653b2b1669e563bc4` |
 | Muse Spark 1.2 | 59,273 | `f491b1840cce1103af45a14c8625c5c6392afdb447b9106f58c13edcda694bd5` |
 | MiniMax M3 | 45,926 | `529bb9041376a432d8174e0986309080935a376993f9885437a7bf02377c8e41` |
+| HY4 Preview | 73,602 | `1713090aff4a6c1744e88f1918a728515e6cf5a1e7d6da270c0828f3446f31fd` |
+| GLM-5.3-Flash Max | 48,007 | `42b2d3fea6933358cf272f61149a668d57564bdab0e8b5c98de8e4872c89a308` |
 
-This is one run per model, not a statistical benchmark. The pages load Three.js from a CDN at runtime. The included side-by-side is 1920×640, 60fps, and 32 seconds. Each pane was rotated to its exact authored loop opening without dropping frames; only the model names are burned in. Local paths, operator notes, browser profiles, and other recording artifacts were excluded.
+This is one recorded run per model, not a statistical benchmark. The pages load Three.js from a CDN at runtime. The HY4/GLM side-by-side stays on X at 1920×640, 60fps, and 26.300 seconds; only the model names are burned in. Local paths, operator notes, browser profiles, videos, and other recording artifacts were excluded from this cabinet.
 
 ## Generation chats
 

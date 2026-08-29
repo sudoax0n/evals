@@ -14,7 +14,7 @@ Open a folder, download the page, run it locally.
 
 | Date | Pair | Folder |
 |------|------|--------|
-| 2026-08-28 | Orbital Salvage — five models | [2026-08-28-orbital-salvage](2026-08-28-orbital-salvage) |
+| 2026-08-28 | Orbital Salvage — seven models + follow-up | [2026-08-28-orbital-salvage](2026-08-28-orbital-salvage) |
 | 2026-08-23 | Mountain Cabin four-way | [2026-08-23-mountain-cabin-storm](2026-08-23-mountain-cabin-storm) |
 | 2026-08-21 | Ox Alpha vs Opus 5 | [2026-08-21-ps1-tank](2026-08-21-ps1-tank) |
 | 2026-08-14 | Gemini 3.7 Flash High vs Grok 4.6 Extra High | [2026-08-14-foucault](2026-08-14-foucault) |
