@@ -14,7 +14,7 @@ Open a folder, download the page, run it locally.
 
 | Date | Pair | Folder |
 |------|------|--------|
-| 2026-08-28 | Orbital Salvage — seven models + follow-up | [2026-08-28-orbital-salvage](2026-08-28-orbital-salvage) |
+| 2026-08-28 | Orbital Salvage — eight models + follow-ups | [2026-08-28-orbital-salvage](2026-08-28-orbital-salvage) |
 | 2026-08-23 | Mountain Cabin four-way | [2026-08-23-mountain-cabin-storm](2026-08-23-mountain-cabin-storm) |
 | 2026-08-21 | Ox Alpha vs Opus 5 | [2026-08-21-ps1-tank](2026-08-21-ps1-tank) |
 | 2026-08-14 | Gemini 3.7 Flash High vs Grok 4.6 Extra High | [2026-08-14-foucault](2026-08-14-foucault) |
@@ -25,7 +25,7 @@ On the tank tape: Ox Alpha made the faster demolition toy. Opus 5 made the more 
 
 On the Mountain Cabin tape: GPT-5.6 Sol xhigh completed the hardest camera move, from the snowfield through the window into a furnished cabin. Ox Alpha Max built a strong exterior but clipped the interior camera. Muse stared at a dark wall for roughly two seconds.
 
-On the Orbital Salvage tape: Opus 5 Max made the strongest film; Sol xhigh made the repair easiest to score. Luna Max separated from Muse Spark and MiniMax M3 on repair readability.
+On the Orbital Salvage tape: Opus 5 Max made the strongest film; Sol xhigh made the repair easiest to score. Later pairing: Gemini 3.7 Flash High took the lead from HY4 Preview; HY4 kept the sunrise.
 
 ## Layout
 
