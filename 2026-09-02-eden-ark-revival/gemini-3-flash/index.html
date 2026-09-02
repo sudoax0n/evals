@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EDEN ARK REVIVAL</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        #vignette {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            box-shadow: inset 0 0 150px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- CONSTANTS & CONFIG ---
+        const DURATION = 48; // seconds
+        const ASPECT = 16 / 9;
+
+        // --- RENDERER SETUP ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        document.body.appendChild(renderer.domElement);
+
+        // --- SHADERS ---
+
+        const EarthShader = {
+            vertexShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vSunDir;
+                varying vec3 vViewDir;
+                void main() {
+                    vUv = uv;
+                    vNormal = normalize(normalMatrix * normal);
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    vSunDir = normalize(viewMatrix * vec4(100.0, 50.0, -100.0, 0.0)).xyz;
+                    vViewDir = normalize(-mvPosition.xyz);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec2 vUv;
+                varying vec3 vNormal;
+                varying vec3 vSunDir;
+                varying vec3 vViewDir;
+                
+                float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+                float noise(vec2 p) {
+                    vec2 i = floor(p); vec2 f = fract(p);
+                    vec2 u = f*f*(3.0-2.0*f);
+                    return mix(mix(hash(i + vec2(0.0,0.0)), hash(i + vec2(1.0,0.0)), u.x),
+                               mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);
+                }
+                
+                void main() {
+                    float dotNL = dot(vNormal, vSunDir);
+                    float day = smoothstep(-0.2, 0.2, dotNL);
+                    
+                    // Land vs Water
+                    float n = noise(vUv * 15.0) + 0.5 * noise(vUv * 30.0);
+                    vec3 ocean = vec3(0.01, 0.05, 0.2);
+                    vec3 land = mix(vec3(0.1, 0.25, 0.1), vec3(0.4, 0.35, 0.2), n);
+                    vec3 col = mix(ocean, land, smoothstep(0.48, 0.52, n));
+                    
+                    // Night lights
+                    float lights = pow(1.0 - day, 2.0) * step(0.6, noise(vUv * 60.0)) * 0.8;
+                    vec3 night = vec3(1.0, 0.8, 0.4) * lights;
+                    
+                    // Atmosphere Rim
+                    float rim = pow(1.0 - max(dot(vNormal, vViewDir), 0.0), 3.0);
+                    vec3 atmosphere = vec3(0.4, 0.6, 1.0) * rim * day;
+                    
+                    col = col * day + night + atmosphere;
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            `
+        };
+
+        const EngineShader = {
+            uniforms: { time: { value: 0 } },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                varying vec2 vUv;
+                void main() {
+                    float pulse = sin(time * 20.0 + vUv.y * 10.0) * 0.1 + 0.9;
+                    float grad = pow(1.0 - vUv.y, 2.0);
+                    vec3 blue = vec3(0.2, 0.6, 1.0);
+                    vec3 white = vec3(1.0, 1.0, 1.0);
+                    vec3 col = mix(blue, white, grad) * pulse * grad * 3.0;
+                    gl_FragColor = vec4(col, grad);
+                }
+            `
+        };
+
+        // --- PROCEDURAL GEOMETRY GENERATORS ---
+
+        function createEarth() {
+            const group = new THREE.Group();
+            
+            // Surface
+            const geo = new THREE.SphereGeometry(100, 64, 64);
+            const mat = new THREE.ShaderMaterial(EarthShader);
+            const earth = new THREE.Mesh(geo, mat);
+            group.add(earth);
+
+            // Clouds
+            const cloudGeo = new THREE.SphereGeometry(101.5, 64, 64);
+            const cloudMat = new THREE.MeshPhongMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.35
+            });
+            const clouds = new THREE.Mesh(cloudGeo, cloudMat);
+            group.add(clouds);
+
+            // Atmosphere Glow
+            const glowGeo = new THREE.SphereGeometry(105, 64, 64);
+            const glowMat = new THREE.ShaderMaterial({
+                transparent: true,
+                side: THREE.BackSide,
+                uniforms: { vSunDir: { value: new THREE.Vector3(100, 50, -100).normalize() } },
+                vertexShader: `
+                    varying float intensity;
+                    varying vec3 vNormal;
+                    void main() {
+                        vNormal = normalize(normalMatrix * normal);
+                        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                    vec3 viewDir = normalize(-mv.xyz);
+                        intensity = pow(0.7 - dot(vNormal, vec3(0,0,1)), 4.0);
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    varying float intensity;
+                    void main() {
+                        gl_FragColor = vec4(0.3, 0.6, 1.0, intensity * 0.5);
+                    }
+                `
+            });
+            const glow = new THREE.Mesh(glowGeo, glowMat);
+            group.add(glow);
+
+            return { group, earth, clouds };
+        }
+
+        function createRescueCraft() {
+            const group = new THREE.Group();
+            
+            // Main Body - Wedge shape
+            const bodyGeo = new THREE.BoxGeometry(2, 0.8, 5);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.9, roughness: 0.2 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.z = -1;
+            group.add(body);
+
+            // Nose
+            const noseGeo = new THREE.ConeGeometry(1, 2, 4);
+            const nose = new THREE.Mesh(noseGeo, bodyMat);
+            nose.rotation.x = Math.PI * 0.5;
+            nose.position.z = 2.5;
+            group.add(nose);
+
+            // Cockpit Glass
+            const glassGeo = new THREE.SphereGeometry(0.6, 16, 16, 0, Math.PI*2, 0, Math.PI*0.5);
+            const glassMat = new THREE.MeshPhongMaterial({ color: 0x000000, shininess: 100, transparent: true, opacity: 0.8 });
+            const glass = new THREE.Mesh(glassGeo, glassMat);
+            glass.position.set(0, 0.4, 2);
+            glass.scale.set(1, 0.5, 1.5);
+            group.add(glass);
+
+            // Engines
+            const engineMat = new THREE.ShaderMaterial(EngineShader);
+            engineMat.transparent = true;
+            engineMat.blending = THREE.AdditiveBlending;
+            
+            for(let i=-1; i<=1; i+=2) {
+                const e = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 2, 16), engineMat);
+                e.rotation.x = -Math.PI * 0.5;
+                e.position.set(i*0.8, -0.2, -3.5);
+                group.add(e);
+                
+                // Engine Light
+                const pLight = new THREE.PointLight(0x4488ff, 2, 10);
+                pLight.position.set(i*0.8, -0.2, -4);
+                group.add(pLight);
+            }
+
+            return group;
+        }
+
+        function createArk() {
+            const group = new THREE.Group();
+            
+            // Central Spine
+            const spineGeo = new THREE.CylinderGeometry(2, 2, 20, 8);
+            const mat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.4 });
+            const spine = new THREE.Mesh(spineGeo, mat);
+            spine.rotation.z = Math.PI * 0.5;
+            group.add(spine);
+
+            // Biome Rings (4 of them)
+            const biomes = [];
+            for(let i=0; i<4; i++) {
+                const ring = new THREE.Group();
+                ring.position.x = (i - 1.5) * 5;
+                
+                // Glass Hull
+                const glassGeo = new THREE.TorusGeometry(3.5, 0.8, 16, 64);
+                const glassMat = new THREE.MeshPhysicalMaterial({
+                    transparent: true, opacity: 0.3, transmission: 0.9, thickness: 0.5, roughness: 0.1
+                });
+                const glass = new THREE.Mesh(glassGeo, glassMat);
+                glass.rotation.y = Math.PI * 0.5;
+                ring.add(glass);
+
+                // Internal Plants (Procedural points/cubes)
+                const plants = new THREE.Group();
+                for(let j=0; j<50; j++) {
+                    const p = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.5, 0.2), new THREE.MeshStandardMaterial({color: 0x113311}));
+                    const angle = Math.random() * Math.PI * 2;
+                    p.position.set(0, Math.cos(angle)*3.5, Math.sin(angle)*3.5);
+                    plants.add(p);
+                }
+                ring.add(plants);
+                biomes.push({ring, plants, glass});
+                group.add(ring);
+            }
+
+            // Solar Petals (Foldable)
+            const petals = [];
+            for(let i=0; i<6; i++) {
+                const petalPivot = new THREE.Group();
+                const petalGeo = new THREE.BoxGeometry(6, 0.1, 2);
+                const petalMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 1, roughness: 0.1 });
+                const petal = new THREE.Mesh(petalGeo, petalMat);
+                petal.position.x = 3.5;
+                petalPivot.add(petal);
+                petalPivot.rotation.z = (i / 6) * Math.PI * 2;
+                petalPivot.rotation.y = 1.4; // Folded initial state
+                petalPivot.position.x = -10;
+                group.add(petalPivot);
+                petals.push(petalPivot);
+            }
+
+            return { group, biomes, petals };
+        }
+
+        // --- WORLD CONSTRUCTION ---
+        const earthData = createEarth();
+        earthData.group.position.set(0, -150, -200);
+        scene.add(earthData.group);
+
+        const arkData = createArk();
+        arkData.group.position.set(0, 0, -100);
+        scene.add(arkData.group);
+
+        const craft = createRescueCraft();
+        scene.add(craft);
+
+        // Lighting
+        const sun = new THREE.DirectionalLight(0xffffff, 2.5);
+        sun.position.set(100, 50, -100);
+        scene.add(sun);
+        
+        const ambient = new THREE.AmbientLight(0xffffff, 2.5);
+        scene.add(ambient);
+
+        // Stars (Background)
+        const starGeo = new THREE.BufferGeometry();
+        const starCoords = [];
+        for(let i=0; i<5000; i++) {
+            const r = 1000;
+            const theta = Math.random()*Math.PI*2;
+            const phi = Math.acos(2*Math.random()-1);
+            starCoords.push(r*Math.sin(phi)*Math.cos(theta), r*Math.sin(phi)*Math.sin(theta), r*Math.cos(phi));
+        }
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starCoords, 3));
+        const stars = new THREE.Points(starGeo, new THREE.PointsMaterial({color: 0xffffff, size: 0.8}));
+        scene.add(stars);
+
+        // --- ANIMATION LOOP ---
+        let startTime = Date.now();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsed = ((Date.now() - startTime) / 1000) % DURATION;
+            const time = elapsed;
+            
+            // Update materials
+            EngineShader.uniforms.time.value = time;
+            earthData.clouds.rotation.y += 0.0002;
+            earthData.group.rotation.y += 0.0001;
+
+            // --- CINEMATIC SCRIPT ---
+            
+            // Phase 1: 0-6s (The Hook)
+            if (time < 6) {
+                const t = time / 6;
+                camera.position.set(5, 2, 5);
+                camera.lookAt(craft.position);
+                craft.position.set(0, 0, 50 - t * 20);
+                craft.rotation.z = Math.sin(time) * 0.05;
+            }
+            // Phase 2: 6-16s (Approach & Dock)
+            else if (time < 16) {
+                const t = (time - 6) / 10;
+                craft.position.set(0, 0, 30 - t * 40); // Glide to z=-10
+                camera.position.lerpVectors(new THREE.Vector3(20, 10, 40), new THREE.Vector3(15, 5, -80), t);
+                camera.lookAt(arkData.group.position);
+            }
+            // Phase 3: 16-28s (Ignition)
+            else if (time < 28) {
+                const t = (time - 16) / 12;
+                craft.position.set(0, 0, -10); // Docked
+                camera.position.set(-15, 2, -105);
+                camera.lookAt(arkData.group.position.clone().add(new THREE.Vector3(5,0,0)));
+                
+                // Wake up systems
+                arkData.biomes.forEach((b, i) => {
+                    const delay = i * 0.2;
+                    if (t > delay) {
+                        const intensity = Math.min(1, (t - delay) * 2);
+                        b.plants.children.forEach(p => {
+                            p.material.color.setHSL(0.3, 0.8, 0.2 + intensity * 0.4);
+                            p.scale.set(1, 1 + intensity * 2, 1);
+                        });
+                        b.glass.material.opacity = 0.3 + intensity * 0.4;
+                    }
+                });
+            }
+            // Phase 4: 28-38s (The Bloom)
+            else if (time < 38) {
+                const t = (time - 28) / 10;
+                camera.position.set(30, 15, -120);
+                camera.lookAt(arkData.group.position);
+                
+                // Unfold petals
+                arkData.petals.forEach(p => {
+                    p.rotation.y = 1.4 - t * 1.6; // Unfold to slightly open
+                });
+            }
+            // Phase 5: 38-48s (Payoff & Loop Reset)
+            else {
+                const t = (time - 38) / 10;
+                camera.position.set(0, 50 * t, -250 + t * 50);
+                camera.lookAt(arkData.group.position);
+                
+                // Eclipse Reset: move a large plane or earth itself to block view at 47.5s
+                if (time > 47) {
+                    const fade = (time - 47);
+                    // fade
+                } else {
+                    // solid
+                }
+            }
+
+            // Engine Flicker
+            craft.children.forEach(c => {
+                if (c instanceof THREE.PointLight) {
+                    c.intensity = 2 + Math.random() * 2;
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>

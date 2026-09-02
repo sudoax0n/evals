@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>EDEN ARK REVIVAL</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #010206;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #000;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .cinematic-vignette {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      box-shadow: inset 0 0 150px rgba(0, 0, 0, 0.88);
+      z-index: 10;
+    }
+  </style>
+
+  <!-- Three.js & Post-Processing Stack via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+</head>
+<body>
+  <div id="canvas-container">
+    <canvas id="webgl-canvas"></canvas>
+    <div class="cinematic-vignette"></div>
+  </div>
+
+  <script>
+  (function() {
+    'use strict';
+
+    // Global timeline override hook for deterministic inspection
+    window._overrideTime = null;
+
+    /* =========================================================================
+       1. FAST PROCEDURAL SIMPLEX NOISE ENGINE
+       ========================================================================= */
+    const SimplexNoise = (function() {
+      const F3 = 1.0 / 3.0, G3 = 1.0 / 6.0;
+      const F2 = 0.5 * (Math.sqrt(3.0) - 1.0), G2 = (3.0 - Math.sqrt(3.0)) / 6.0;
+      const p = new Uint8Array(256);
+      let s = 2026;
+      function pseudoRandom() {
+        s = (s * 16807) % 2147483647;
+        return (s - 1) / 2147483646;
+      }
+      for (let i = 0; i < 256; i++) p[i] = Math.floor(pseudoRandom() * 256);
+      const perm = new Uint8Array(512), permMod12 = new Uint8Array(512);
+      for (let i = 0; i < 512; i++) {
+        perm[i] = p[i & 255];
+        permMod12[i] = perm[i] % 12;
+      }
+      const grad3 = new Float32Array([
+        1,1,0, -1,1,0, 1,-1,0, -1,-1,0,
+        1,0,1, -1,0,1, 1,0,-1, -1,0,-1,
+        0,1,1, 0,-1,1, 0,1,-1, 0,-1,-1
+      ]);
+
+      function noise2D(xin, yin) {
+        let n0 = 0, n1 = 0, n2 = 0;
+        const s = (xin + yin) * F2;
+        const i = Math.floor(xin + s), j = Math.floor(yin + s);
+        const t = (i + j) * G2;
+        const X0 = i - t, Y0 = j - t;
+        const x0 = xin - X0, y0 = yin - Y0;
+        let i1, j1;
+        if (x0 > y0) { i1 = 1; j1 = 0; } else { i1 = 0; j1 = 1; }
+        const x1 = x0 - i1 + G2, y1 = y0 - j1 + G2;
+        const x2 = x0 - 1.0 + 2.0 * G2, y2 = y0 - 1.0 + 2.0 * G2;
+        const ii = i & 255, jj = j & 255;
+        let t0 = 0.5 - x0*x0 - y0*y0;
+        if (t0 > 0) {
+          t0 *= t0;
+          const gi0 = permMod12[ii + perm[jj]] * 3;
+          n0 = t0 * t0 * (grad3[gi0] * x0 + grad3[gi0 + 1] * y0);
+        }
+        let t1 = 0.5 - x1*x1 - y1*y1;
+        if (t1 > 0) {
+          t1 *= t1;
+          const gi1 = permMod12[ii + i1 + perm[jj + j1]] * 3;
+          n1 = t1 * t1 * (grad3[gi1] * x1 + grad3[gi1 + 1] * y1);
+        }
+        let t2 = 0.5 - x2*x2 - y2*y2;
+        if (t2 > 0) {
+          t2 *= t2;
+          const gi2 = permMod12[ii + 1 + perm[jj + 1]] * 3;
+          n2 = t2 * t2 * (grad3[gi2] * x2 + grad3[gi2 + 1] * y2);
+        }
+        return 70.0 * (n0 + n1 + n2);
+      }
+
+      function noise3D(x, y, z) {
+        let n0, n1, n2, n3;
+        const s = (x + y + z) * F3;
+        const i = Math.floor(x + s), j = Math.floor(y + s), k = Math.floor(z + s);
+        const t = (i + j + k) * G3;
+        const X0 = i - t, Y0 = j - t, Z0 = k - t;
+        const x0 = x - X0, y0 = y - Y0, z0 = z - Z0;
+        let i1, j1, k1, i2, j2, k2;
+        if (x0 >= y0) {
+          if (y0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=1; k2=0; }
+          else if (x0 >= z0) { i1=1; j1=0; k1=0; i2=1; j2=0; k2=1; }
+          else { i1=0; j1=0; k1=1; i2=1; j2=0; k2=1; }
+        } else {
+          if (y0 < z0) { i1=0; j1=0; k1=1; i2=0; j2=1; k2=1; }
+          else if (x0 < z0) { i1=0; j1=1; k1=0; i2=0; j2=1; k2=1; }
+          else { i1=0; j1=1; k1=0; i2=1; j2=1; k2=0; }
+        }
+        const x1 = x0 - i1 + G3, y1 = y0 - j1 + G3, z1 = z0 - k1 + G3;
+        const x2 = x0 - i2 + 2.0*G3, y2 = y0 - j2 + 2.0*G3, z2 = z0 - k2 + 2.0*G3;
+        const x3 = x0 - 1.0 + 3.0*G3, y3 = y0 - 1.0 + 3.0*G3, z3 = z0 - 1.0 + 3.0*G3;
+        const ii = i & 255, jj = j & 255, kk = k & 255;
+        let t0 = 0.6 - x0*x0 - y0*y0 - z0*z0;
+        if (t0 < 0) n0 = 0.0;
+        else { t0 *= t0; n0 = t0 * t0 * (grad3[permMod12[ii+perm[jj+perm[kk]]]*3]*x0 + grad3[permMod12[ii+perm[jj+perm[kk]]]*3+1]*y0 + grad3[permMod12[ii+perm[jj+perm[kk]]]*3+2]*z0); }
+        let t1 = 0.6 - x1*x1 - y1*y1 - z1*z1;
+        if (t1 < 0) n1 = 0.0;
+        else { t1 *= t1; n1 = t1 * t1 * (grad3[permMod12[ii+i1+perm[jj+j1+perm[kk+k1]]]*3]*x1 + grad3[permMod12[ii+i1+perm[jj+j1+perm[kk+k1]]]*3+1]*y1 + grad3[permMod12[ii+i1+perm[jj+j1+perm[kk+k1]]]*3+2]*z1); }
+        let t2 = 0.6 - x2*x2 - y2*y2 - z2*z2;
+        if (t2 < 0) n2 = 0.0;
+        else { t2 *= t2; n2 = t2 * t2 * (grad3[permMod12[ii+i2+perm[jj+j2+perm[kk+k2]]]*3]*x2 + grad3[permMod12[ii+i2+perm[jj+j2+perm[kk+k2]]]*3+1]*y2 + grad3[permMod12[ii+i2+perm[jj+j2+perm[kk+k2]]]*3+2]*z2); }
+        let t3 = 0.6 - x3*x3 - y3*y3 - z3*z3;
+        if (t3 < 0) n3 = 0.0;
+        else { t3 *= t3; n3 = t3 * t3 * (grad3[permMod12[ii+1+perm[jj+1+perm[kk+1]]]*3]*x3 + grad3[permMod12[ii+1+perm[jj+1+perm[kk+1]]]*3+1]*y3 + grad3[permMod12[ii+1+perm[jj+1+perm[kk+1]]]*3+2]*z3); }
+        return 32.0 * (n0 + n1 + n2 + n3);
+      }
+
+      function fbm2D(x, y, octaves = 6, lacunarity = 2.0, gain = 0.5) {
+        let sum = 0, amp = 1.0, freq = 1.0, maxAmp = 0;
+        for (let i = 0; i < octaves; i++) {
+          sum += noise2D(x * freq, y * freq) * amp;
+          maxAmp += amp;
+          amp *= gain;
+          freq *= lacunarity;
+        }
+        return sum / maxAmp;
+      }
+
+      function fbm3D(x, y, z, octaves = 5, lacunarity = 2.0, gain = 0.5) {
+        let sum = 0, amp = 1.0, freq = 1.0, maxAmp = 0;
+        for (let i = 0; i < octaves; i++) {
+          sum += noise3D(x * freq, y * freq, z * freq) * amp;
+          maxAmp += amp;
+          amp *= gain;
+          freq *= lacunarity;
+        }
+        return sum / maxAmp;
+      }
+
+      return { noise2D, noise3D, fbm2D, fbm3D };
+    })();
+
+    /* =========================================================================
+       2. PROCEDURAL TEXTURE GENERATION SUITE
+       ========================================================================= */
+    function createEarthTextures() {
+      const W = 2048, H = 1024;
+      
+      const colorCanvas = document.createElement('canvas');
+      colorCanvas.width = W; colorCanvas.height = H;
+      const ctx = colorCanvas.getContext('2d');
+      const imgData = ctx.createImageData(W, H);
+      const data = imgData.data;
+
+      const nightCanvas = document.createElement('canvas');
+      nightCanvas.width = W; nightCanvas.height = H;
+      const nightCtx = nightCanvas.getContext('2d');
+      const nightImgData = nightCtx.createImageData(W, H);
+      const nightData = nightImgData.data;
+
+      const specCanvas = document.createElement('canvas');
+      specCanvas.width = W; specCanvas.height = H;
+      const specCtx = specCanvas.getContext('2d');
+      const specImgData = specCtx.createImageData(W, H);
+      const specData = specImgData.data;
+
+      const bumpCanvas = document.createElement('canvas');
+      bumpCanvas.width = W; bumpCanvas.height = H;
+      const bumpCtx = bumpCanvas.getContext('2d');
+      const bumpImgData = bumpCtx.createImageData(W, H);
+      const bumpData = bumpImgData.data;
+
+      for (let y = 0; y < H; y++) {
+        const lat = (y / H) * Math.PI - Math.PI / 2;
+        const cosLat = Math.cos(lat);
+        const sinLat = Math.sin(lat);
+        const polarDist = Math.abs(lat) / (Math.PI / 2);
+
+        for (let x = 0; x < W; x++) {
+          const lon = (x / W) * Math.PI * 2 - Math.PI;
+          const cosLon = Math.cos(lon);
+          const sinLon = Math.sin(lon);
+
+          const nx = cosLat * cosLon * 2.2;
+          const ny = sinLat * 2.2;
+          const nz = cosLat * sinLon * 2.2;
+
+          const baseNoise = SimplexNoise.fbm3D(nx, ny, nz, 6, 2.1, 0.52);
+          const ridgeNoise = Math.abs(SimplexNoise.fbm3D(nx * 2.5, ny * 2.5, nz * 2.5, 4, 2.0, 0.5));
+          const fineNoise = SimplexNoise.noise3D(nx * 8.0, ny * 8.0, nz * 8.0) * 0.1;
+          
+          let elevation = baseNoise + fineNoise * 0.5;
+
+          if (polarDist > 0.82) {
+            elevation += (polarDist - 0.82) * 2.5;
+          }
+
+          const idx = (y * W + x) * 4;
+          let r, g, b, spec = 0, bumpVal = 0, nightR = 0, nightG = 0, nightB = 0;
+
+          if (elevation < 0.02) {
+            const depth = Math.max(0, Math.min(1, (0.02 - elevation) * 3.5));
+            const rOcean = Math.floor(4 + (20 - 4) * (1 - depth));
+            const gOcean = Math.floor(22 + (110 - 22) * (1 - depth));
+            const bOcean = Math.floor(68 + (155 - 68) * (1 - depth));
+            
+            r = rOcean; g = gOcean; b = bOcean;
+            spec = 255;
+            bumpVal = 10;
+          } else {
+            const landHeight = (elevation - 0.02) * 2.2;
+            bumpVal = Math.min(255, Math.floor(40 + landHeight * 220 + ridgeNoise * 70));
+            spec = 25;
+
+            if (polarDist > 0.80 || landHeight > 0.75) {
+              r = 235; g = 246; b = 255;
+              spec = 170;
+            } else if (landHeight < 0.12) {
+              const beachBlend = landHeight / 0.12;
+              r = Math.floor(205 * (1 - beachBlend) + 42 * beachBlend);
+              g = Math.floor(188 * (1 - beachBlend) + 125 * beachBlend);
+              b = Math.floor(138 * (1 - beachBlend) + 50 * beachBlend);
+            } else if (landHeight < 0.45) {
+              const climateNoise = SimplexNoise.noise2D(x * 0.02, y * 0.02);
+              if (polarDist < 0.35 && climateNoise > 0.1) {
+                r = 24; g = 92; b = 38;
+              } else if (climateNoise < -0.2 && polarDist < 0.5) {
+                r = 195; g = 148; b = 92;
+              } else {
+                r = 55; g = 125; b = 48;
+              }
+            } else {
+              const mBlend = (landHeight - 0.45) / 0.3;
+              r = Math.floor(95 + 95 * mBlend);
+              g = Math.floor(85 + 90 * mBlend);
+              b = Math.floor(75 + 105 * mBlend);
+            }
+
+            if (landHeight < 0.35 && polarDist < 0.72) {
+              const cityNoise = SimplexNoise.fbm3D(nx * 14.0, ny * 14.0, nz * 14.0, 3, 2.2, 0.6);
+              const coastalBonus = (elevation < 0.12) ? 0.35 : 0.0;
+              if (cityNoise + coastalBonus > 0.48) {
+                const intensity = Math.min(1.0, (cityNoise + coastalBonus - 0.48) * 3.5);
+                nightR = Math.floor(255 * intensity);
+                nightG = Math.floor(205 * intensity);
+                nightB = Math.floor(120 * intensity);
+              }
+            }
+          }
+
+          data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = 255;
+          specData[idx] = spec; specData[idx + 1] = spec; specData[idx + 2] = spec; specData[idx + 3] = 255;
+          bumpData[idx] = bumpVal; bumpData[idx + 1] = bumpVal; bumpData[idx + 2] = bumpVal; bumpData[idx + 3] = 255;
+          nightData[idx] = nightR; nightData[idx + 1] = nightG; nightData[idx + 2] = nightB; nightData[idx + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      specCtx.putImageData(specImgData, 0, 0);
+      bumpCtx.putImageData(bumpImgData, 0, 0);
+      nightCtx.putImageData(nightImgData, 0, 0);
+
+      // Clouds
+      const cloudCanvas = document.createElement('canvas');
+      cloudCanvas.width = W; cloudCanvas.height = H;
+      const cCtx = cloudCanvas.getContext('2d');
+      const cImg = cCtx.createImageData(W, H);
+      const cData = cImg.data;
+
+      for (let y = 0; y < H; y++) {
+        const lat = (y / H) * Math.PI - Math.PI / 2;
+        const cosLat = Math.cos(lat);
+        const sinLat = Math.sin(lat);
+        for (let x = 0; x < W; x++) {
+          const lon = (x / W) * Math.PI * 2 - Math.PI;
+          const nx = cosLat * Math.cos(lon) * 2.8;
+          const ny = sinLat * 2.8;
+          const nz = cosLat * Math.sin(lon) * 2.8;
+
+          const swirl = SimplexNoise.noise3D(nx * 1.5, ny * 1.5, nz * 1.5) * 0.75;
+          const cNoise = SimplexNoise.fbm3D(nx + swirl, ny, nz - swirl, 5, 2.1, 0.55);
+
+          const idx = (y * W + x) * 4;
+          let density = Math.max(0, (cNoise - 0.08) * 1.6);
+          density = Math.min(1.0, Math.pow(density, 1.4));
+
+          const val = Math.floor(density * 255);
+          cData[idx] = 255;
+          cData[idx + 1] = 255;
+          cData[idx + 2] = 255;
+          cData[idx + 3] = val;
+        }
+      }
+      cCtx.putImageData(cImg, 0, 0);
+
+      const colorTex = new THREE.CanvasTexture(colorCanvas);
+      const specTex = new THREE.CanvasTexture(specCanvas);
+      const bumpTex = new THREE.CanvasTexture(bumpCanvas);
+      const nightTex = new THREE.CanvasTexture(nightCanvas);
+      const cloudTex = new THREE.CanvasTexture(cloudCanvas);
+
+      colorTex.wrapS = colorTex.wrapT = THREE.RepeatWrapping;
+      specTex.wrapS = specTex.wrapT = THREE.RepeatWrapping;
+      bumpTex.wrapS = bumpTex.wrapT = THREE.RepeatWrapping;
+      nightTex.wrapS = nightTex.wrapT = THREE.RepeatWrapping;
+      cloudTex.wrapS = cloudTex.wrapT = THREE.RepeatWrapping;
+
+      return { colorTex, specTex, bumpTex, nightTex, cloudTex };
+    }
+
+    function createHullTexture() {
+      const size = 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#262d3a';
+      ctx.fillRect(0, 0, size, size);
+
+      ctx.strokeStyle = '#141820';
+      ctx.lineWidth = 3;
+      for (let i = 64; i < size; i += 64) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0); ctx.lineTo(i, size);
+        ctx.moveTo(0, i); ctx.lineTo(size, i);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = '#1c222c';
+      for (let x = 32; x < size; x += 128) {
+        for (let y = 32; y < size; y += 128) {
+          ctx.fillRect(x, y, 64, 64);
+        }
+      }
+
+      ctx.fillStyle = '#52627a';
+      for (let x = 16; x < size; x += 64) {
+        for (let y = 16; y < size; y += 64) {
+          ctx.fillRect(x, y, 2, 2);
+        }
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createSolarPanelTexture() {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+
+      ctx.fillStyle = '#e8c448';
+      ctx.fillRect(0, 0, size, size);
+
+      ctx.strokeStyle = '#7c6116';
+      ctx.lineWidth = 2;
+      const hexR = 24;
+      const h = hexR * Math.sqrt(3);
+
+      for (let y = 0; y < size + h; y += h) {
+        for (let x = 0; x < size + hexR * 3; x += hexR * 3) {
+          drawHex(ctx, x, y, hexR);
+          drawHex(ctx, x + hexR * 1.5, y + h / 2, hexR);
+        }
+      }
+
+      function drawHex(ctx, x, y, r) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const angle = (i * 60) * Math.PI / 180;
+          const hx = x + r * Math.cos(angle);
+          const hy = y + r * Math.sin(angle);
+          if (i === 0) ctx.moveTo(hx, hy);
+          else ctx.lineTo(hx, hy);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createFrostTexture() {
+      const size = 512;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      const data = img.data;
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const n = SimplexNoise.fbm2D(x * 0.02, y * 0.02, 4);
+          const fine = SimplexNoise.noise2D(x * 0.1, y * 0.1) * 0.3;
+          const frost = Math.max(0, Math.min(1, n + fine + 0.3));
+          const idx = (y * size + x) * 4;
+          data[idx] = 235;
+          data[idx + 1] = 245;
+          data[idx + 2] = 255;
+          data[idx + 3] = Math.floor(frost * 220);
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function createFoliageTexture() {
+      const size = 256;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(size, size);
+      const data = img.data;
+
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const n = SimplexNoise.fbm2D(x * 0.05, y * 0.05, 3);
+          const idx = (y * size + x) * 4;
+          data[idx] = Math.floor(25 + n * 45);
+          data[idx + 1] = Math.floor(135 + n * 80);
+          data[idx + 2] = Math.floor(45 + n * 50);
+          data[idx + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    /* =========================================================================
+       3. THREE.JS INITIALIZATION & SCENE GRAPH
+       ========================================================================= */
+    const canvas = document.getElementById('webgl-canvas');
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvas,
+      antialias: true,
+      preserveDrawingBuffer: true,
+      powerPreference: "high-performance"
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.35;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x010308, 0.00012);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 45000);
+
+    const earthTexs = createEarthTextures();
+    const hullTex = createHullTexture();
+    const solarTex = createSolarPanelTexture();
+    const frostTex = createFrostTexture();
+    const foliageTex = createFoliageTexture();
+
+    /* =========================================================================
+       4. SUN & CELESTIAL LIGHTING
+       ========================================================================= */
+    const sunPosition = new THREE.Vector3(3400, 1600, -3200);
+
+    const sunLight = new THREE.DirectionalLight(0xfff6e6, 4.0);
+    sunLight.position.copy(sunPosition);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 500;
+    sunLight.shadow.camera.far = 8000;
+    sunLight.shadow.bias = -0.0002;
+    scene.add(sunLight);
+
+    const earthBounceLight = new THREE.DirectionalLight(0x0e3a62, 0.85);
+    earthBounceLight.position.set(0, -1, 0.5);
+    scene.add(earthBounceLight);
+
+    const ambientLight = new THREE.AmbientLight(0x0a1426, 0.45);
+    scene.add(ambientLight);
+
+    const sunGroup = new THREE.Group();
+    sunGroup.position.copy(sunPosition);
+
+    const sunDiskGeo = new THREE.SphereGeometry(180, 32, 32);
+    const sunDiskMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const sunDiskMesh = new THREE.Mesh(sunDiskGeo, sunDiskMat);
+    sunGroup.add(sunDiskMesh);
+
+    const coronaGeo = new THREE.PlaneGeometry(1800, 1800);
+    const coronaMat = new THREE.ShaderMaterial({
+      uniforms: {
+        color1: { value: new THREE.Color(0xfff2e2) },
+        color2: { value: new THREE.Color(0xff8c26) }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        uniform vec3 color1;
+        uniform vec3 color2;
+        void main() {
+          vec2 center = vUv - vec2(0.5);
+          float dist = length(center) * 2.0;
+          if (dist > 1.0) discard;
+          float intensity = pow(1.0 - dist, 2.6);
+          float glow = exp(-dist * 4.2);
+          vec3 col = mix(color2, color1, pow(intensity, 1.4));
+          gl_FragColor = vec4(col, (intensity * 0.9 + glow * 0.7) * 1.6);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    const coronaMesh = new THREE.Mesh(coronaGeo, coronaMat);
+    sunGroup.add(coronaMesh);
+    scene.add(sunGroup);
+
+    function createStarfield() {
+      const starCount = 7000;
+      const geo = new THREE.BufferGeometry();
+      const positions = new Float32Array(starCount * 3);
+      const colors = new Float32Array(starCount * 3);
+      const sizes = new Float32Array(starCount);
+
+      const colorPalette = [
+        new THREE.Color(0xffffff),
+        new THREE.Color(0xa8c0ff),
+        new THREE.Color(0xfff5ea),
+        new THREE.Color(0xffd8aa),
+        new THREE.Color(0x90d4ff)
+      ];
+
+      for (let i = 0; i < starCount; i++) {
+        const u = Math.random();
+        const v = Math.random();
+        const theta = u * 2.0 * Math.PI;
+        const phi = Math.acos(2.0 * v - 1.0);
+        const r = 22000 + Math.random() * 5000;
+
+        const sinPhi = Math.sin(phi);
+        positions[i * 3] = r * sinPhi * Math.cos(theta);
+        positions[i * 3 + 1] = r * sinPhi * Math.sin(theta);
+        positions[i * 3 + 2] = r * Math.cos(phi);
+
+        const col = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+        colors[i * 3] = col.r;
+        colors[i * 3 + 1] = col.g;
+        colors[i * 3 + 2] = col.b;
+
+        sizes[i] = 1.0 + Math.random() * 2.5;
+      }
+
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+      const starMat = new THREE.ShaderMaterial({
+        uniforms: {},
+        vertexShader: `
+          attribute vec3 color;
+          attribute float size;
+          varying vec3 vColor;
+          void main() {
+            vColor = color;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = size * (320.0 / -mvPosition.z);
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main() {
+            vec2 pt = gl_PointCoord - vec2(0.5);
+            float d = length(pt);
+            if (d > 0.5) discard;
+            float alpha = smoothstep(0.5, 0.0, d);
+            gl_FragColor = vec4(vColor, alpha);
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+
+      return new THREE.Points(geo, starMat);
+    }
+    scene.add(createStarfield());
+
+    /* =========================================================================
+       5. HIGH-FIDELITY EARTH SYSTEM
+       ========================================================================= */
+    const earthGroup = new THREE.Group();
+    const earthRadius = 920;
+    earthGroup.position.set(80, -1090, -650);
+
+    const earthSurfaceMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tColor: { value: earthTexs.colorTex },
+        tBump: { value: earthTexs.bumpTex },
+        tSpec: { value: earthTexs.specTex },
+        tNight: { value: earthTexs.nightTex },
+        sunPosition: { value: sunPosition },
+        bumpScale: { value: 0.05 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vUv = uv;
+          vNormal = normalize(normalMatrix * normal);
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPos.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tColor;
+        uniform sampler2D tBump;
+        uniform sampler2D tSpec;
+        uniform sampler2D tNight;
+        uniform vec3 sunPosition;
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+
+        void main() {
+          vec3 sunDir = normalize(sunPosition - vWorldPosition);
+          vec3 norm = normalize(vNormal);
+          vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+
+          float nDotL = dot(norm, sunDir);
+          float dayFactor = smoothstep(-0.15, 0.25, nDotL);
+          float nightFactor = 1.0 - smoothstep(-0.05, 0.15, nDotL);
+
+          vec4 dayColor = texture2D(tColor, vUv);
+          vec4 nightColor = texture2D(tNight, vUv);
+          vec4 specMap = texture2D(tSpec, vUv);
+
+          float lightWrap = max(0.0, (nDotL + 0.2) / 1.2);
+          vec3 diffuse = dayColor.rgb * (lightWrap * 1.35 + 0.05);
+
+          vec3 halfVec = normalize(sunDir + viewDir);
+          float nDotH = max(0.0, dot(norm, halfVec));
+          float specular = pow(nDotH, 50.0) * (specMap.r);
+          diffuse += vec3(1.0, 0.92, 0.78) * specular * 1.8 * dayFactor;
+
+          vec3 finalColor = diffuse * dayFactor + nightColor.rgb * nightFactor * 1.5;
+
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `
+    });
+
+    const earthGlobe = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius, 64, 64),
+      earthSurfaceMat
+    );
+    earthGlobe.receiveShadow = true;
+    earthGroup.add(earthGlobe);
+
+    const cloudMat1 = new THREE.MeshStandardMaterial({
+      map: earthTexs.cloudTex,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.NormalBlending,
+      roughness: 1.0
+    });
+    const cloudMesh1 = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius + 4.5, 64, 64),
+      cloudMat1
+    );
+    earthGroup.add(cloudMesh1);
+
+    const cloudMat2 = new THREE.MeshStandardMaterial({
+      map: earthTexs.cloudTex,
+      transparent: true,
+      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      roughness: 1.0
+    });
+    const cloudMesh2 = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius + 9.0, 64, 64),
+      cloudMat2
+    );
+    cloudMesh2.rotation.y = 1.2;
+    earthGroup.add(cloudMesh2);
+
+    const atmoMat = new THREE.ShaderMaterial({
+      uniforms: {
+        sunPosition: { value: sunPosition }
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPos.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 sunPosition;
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+
+        void main() {
+          vec3 viewDir = normalize(cameraPosition - vWorldPosition);
+          vec3 norm = normalize(vNormal);
+          vec3 sunDir = normalize(sunPosition - vWorldPosition);
+
+          float fresnel = pow(1.0 - max(0.0, dot(viewDir, norm)), 3.0);
+          float sunAlignment = dot(norm, sunDir);
+
+          vec3 dayAtmosphere = vec3(0.24, 0.65, 1.0);
+          vec3 sunsetAtmosphere = vec3(1.0, 0.50, 0.20);
+          vec3 nightAtmosphere = vec3(0.04, 0.09, 0.24);
+
+          vec3 atmoColor = mix(sunsetAtmosphere, dayAtmosphere, smoothstep(-0.2, 0.5, sunAlignment));
+          atmoColor = mix(nightAtmosphere, atmoColor, smoothstep(-0.5, 0.1, sunAlignment));
+
+          float intensity = fresnel * (0.45 + max(0.0, sunAlignment) * 0.95);
+          gl_FragColor = vec4(atmoColor, intensity * 1.55);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      depthWrite: false
+    });
+    const atmoMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(earthRadius + 24.0, 64, 64),
+      atmoMat
+    );
+    earthGroup.add(atmoMesh);
+
+    const auroraGeo = new THREE.CylinderGeometry(earthRadius * 0.28, earthRadius * 0.32, 25, 48, 4, true);
+    const auroraMat = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        uniform float time;
+        void main() {
+          vUv = uv;
+          vec3 pos = position;
+          pos.x += sin(pos.z * 0.05 + time * 1.2) * 4.0;
+          pos.z += cos(pos.x * 0.05 + time * 1.5) * 4.0;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec2 vUv;
+        void main() {
+          float fade = sin(vUv.y * 3.14159);
+          vec3 colorGreen = vec3(0.1, 0.95, 0.45);
+          vec3 colorPurple = vec3(0.65, 0.15, 0.9);
+          vec3 col = mix(colorGreen, colorPurple, vUv.y);
+          gl_FragColor = vec4(col, fade * 0.55);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const auroraMesh = new THREE.Mesh(auroraGeo, auroraMat);
+    auroraMesh.position.set(0, earthRadius * 0.93, 0);
+    earthGroup.add(auroraMesh);
+
+    scene.add(earthGroup);
+
+    /* =========================================================================
+       6. THE HERO RESCUE CRAFT ("VALKYRIE-01")
+       ========================================================================= */
+    const shipGroup = new THREE.Group();
+
+    const darkTitaniumMat = new THREE.MeshStandardMaterial({
+      map: hullTex,
+      roughness: 0.35,
+      metalness: 0.85,
+      color: 0x728090
+    });
+    const ceramicMat = new THREE.MeshStandardMaterial({
+      map: hullTex,
+      roughness: 0.6,
+      metalness: 0.25,
+      color: 0xe0e8f0
+    });
+    const goldGlassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffd860,
+      metalness: 0.92,
+      roughness: 0.05,
+      reflectivity: 1.0,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05
+    });
+    const glowingCyanMat = new THREE.MeshBasicMaterial({ color: 0x00f3ff });
+
+    // Fuselage
+    const noseGeo = new THREE.ConeGeometry(2.2, 7.0, 6);
+    noseGeo.rotateX(Math.PI / 2);
+    const noseMesh = new THREE.Mesh(noseGeo, darkTitaniumMat);
+    noseMesh.position.set(0, 0, 3.5);
+    noseMesh.scale.set(1.1, 0.55, 1.0);
+    shipGroup.add(noseMesh);
+
+    const midBodyGeo = new THREE.BoxGeometry(3.4, 1.5, 8.5);
+    const midBodyMesh = new THREE.Mesh(midBodyGeo, darkTitaniumMat);
+    midBodyMesh.position.set(0, 0, -1.0);
+    shipGroup.add(midBodyMesh);
+
+    const canopyGeo = new THREE.BoxGeometry(1.5, 0.75, 3.0);
+    const canopyMesh = new THREE.Mesh(canopyGeo, goldGlassMat);
+    canopyMesh.position.set(0, 0.85, 1.8);
+    canopyMesh.rotation.x = -0.22;
+    shipGroup.add(canopyMesh);
+
+    // Delta Wings
+    const wingGeo = new THREE.BufferGeometry();
+    const wingVertices = new Float32Array([
+      0, 0, 1.0,   -7.0, -0.2, -4.2,   0, 0, -3.8,
+      0, -0.3, 1.0,  -7.0, -0.4, -4.2,   0, -0.3, -3.8,
+      0, 0, 1.0,   0, 0, -3.8,   7.0, -0.2, -4.2,
+      0, -0.3, 1.0,  0, -0.3, -3.8,   7.0, -0.4, -4.2
+    ]);
+    wingGeo.setAttribute('position', new THREE.BufferAttribute(wingVertices, 3));
+    wingGeo.computeVertexNormals();
+    const wingsMesh = new THREE.Mesh(wingGeo, ceramicMat);
+    shipGroup.add(wingsMesh);
+
+    const wingletGeo = new THREE.BoxGeometry(0.2, 1.6, 2.2);
+    const leftWinglet = new THREE.Mesh(wingletGeo, darkTitaniumMat);
+    leftWinglet.position.set(-6.9, 0.65, -3.9);
+    leftWinglet.rotation.z = -0.15;
+    shipGroup.add(leftWinglet);
+
+    const rightWinglet = new THREE.Mesh(wingletGeo, darkTitaniumMat);
+    rightWinglet.position.set(6.9, 0.65, -3.9);
+    rightWinglet.rotation.z = 0.15;
+    shipGroup.add(rightWinglet);
+
+    const dockArmGeo = new THREE.CylinderGeometry(0.3, 0.4, 2.0, 12);
+    dockArmGeo.rotateX(Math.PI / 2);
+    const dockArmMesh = new THREE.Mesh(dockArmGeo, darkTitaniumMat);
+    dockArmMesh.position.set(0, -0.3, 6.5);
+    shipGroup.add(dockArmMesh);
+
+    const dockRingGeo = new THREE.TorusGeometry(0.5, 0.08, 12, 24);
+    const dockRingMesh = new THREE.Mesh(dockRingGeo, glowingCyanMat);
+    dockRingMesh.position.set(0, -0.3, 7.5);
+    shipGroup.add(dockRingMesh);
+
+    const portNav = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff1133 }));
+    portNav.position.set(-7.0, 0.7, -3.9);
+    shipGroup.add(portNav);
+
+    const stbdNav = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshBasicMaterial({ color: 0x00ff66 }));
+    stbdNav.position.set(7.0, 0.7, -3.9);
+    shipGroup.add(stbdNav);
+
+    const enginePositions = [-1.2, 1.2];
+    const engineNozzles = [];
+    const exhaustCones = [];
+    const engineLights = [];
+
+    enginePositions.forEach((xPos) => {
+      const nozzleGeo = new THREE.CylinderGeometry(0.7, 1.0, 1.8, 24, 1, true);
+      nozzleGeo.rotateX(Math.PI / 2);
+      const nozzleMesh = new THREE.Mesh(nozzleGeo, darkTitaniumMat);
+      nozzleMesh.position.set(xPos, 0, -5.5);
+      shipGroup.add(nozzleMesh);
+      engineNozzles.push(nozzleMesh);
+
+      const throatGeo = new THREE.SphereGeometry(0.55, 16, 16);
+      const throatMesh = new THREE.Mesh(throatGeo, glowingCyanMat);
+      throatMesh.position.set(xPos, 0, -5.0);
+      shipGroup.add(throatMesh);
+
+      const plumeGeo = new THREE.ConeGeometry(0.85, 7.0, 24, 8, true);
+      plumeGeo.rotateX(-Math.PI / 2);
+      plumeGeo.translate(0, 0, -3.5);
+
+      const plumeMat = new THREE.ShaderMaterial({
+        uniforms: {
+          time: { value: 0 },
+          thrust: { value: 1.0 }
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying vec3 vPos;
+          uniform float time;
+          void main() {
+            vUv = uv;
+            vPos = position;
+            vec3 pos = position;
+            pos.x += sin(pos.z * 4.0 - time * 25.0) * 0.03;
+            pos.y += cos(pos.z * 4.0 - time * 25.0) * 0.03;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec2 vUv;
+          varying vec3 vPos;
+          uniform float time;
+          uniform float thrust;
+
+          void main() {
+            float zDist = -vPos.z / 7.0;
+            if (zDist < 0.0 || zDist > 1.0) discard;
+
+            float shock = cos(zDist * 28.0 - time * 35.0) * 0.5 + 0.5;
+            shock = pow(shock, 4.0) * (1.0 - zDist);
+
+            vec3 coreCol = vec3(1.0, 1.0, 1.0);
+            vec3 midCol = vec3(0.0, 0.85, 1.0);
+            vec3 tailCol = vec3(0.05, 0.15, 0.7);
+
+            vec3 col = mix(coreCol, midCol, smoothstep(0.0, 0.4, zDist));
+            col = mix(col, tailCol, smoothstep(0.4, 1.0, zDist));
+            col += vec3(0.8, 0.95, 1.0) * shock * 0.75;
+
+            float alpha = (1.0 - zDist) * thrust * 0.75;
+            gl_FragColor = vec4(col, alpha);
+          }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+      });
+
+      const plumeMesh = new THREE.Mesh(plumeGeo, plumeMat);
+      plumeMesh.position.set(xPos, 0, -6.4);
+      shipGroup.add(plumeMesh);
+      exhaustCones.push(plumeMesh);
+
+      const eLight = new THREE.PointLight(0x00d4ff, 3.0, 40);
+      eLight.position.set(xPos, 0, -7.0);
+      shipGroup.add(eLight);
+      engineLights.push(eLight);
+    });
+
+    scene.add(shipGroup);
+
+    /* =========================================================================
+       7. THE ORBITAL BIOSPHERE ARK ("EDEN-IV")
+       ========================================================================= */
+    const arkGroup = new THREE.Group();
+    arkGroup.position.set(0, 0, 0);
+
+    const arkHullMat = new THREE.MeshStandardMaterial({
+      map: hullTex,
+      color: 0x5a6575,
+      roughness: 0.38,
+      metalness: 0.82
+    });
+    const arkGoldSolarMat = new THREE.MeshPhysicalMaterial({
+      map: solarTex,
+      color: 0xffda70,
+      metalness: 0.96,
+      roughness: 0.05,
+      reflectivity: 1.0,
+      clearcoat: 1.0
+    });
+    const arkGlassMat = new THREE.MeshPhysicalMaterial({
+      color: 0xc4efff,
+      transparent: true,
+      opacity: 0.45,
+      roughness: 0.1,
+      transmission: 0.88,
+      reflectivity: 0.95,
+      clearcoat: 1.0,
+      depthWrite: false
+    });
+    const arkFrostGlassMat = new THREE.MeshStandardMaterial({
+      map: frostTex,
+      color: 0xd8f2ff,
+      transparent: true,
+      opacity: 0.75,
+      roughness: 0.8,
+      blending: THREE.NormalBlending,
+      depthWrite: false
+    });
+    const arkLushFloraMat = new THREE.MeshStandardMaterial({
+      map: foliageTex,
+      color: 0x1e6e28,
+      roughness: 0.7,
+      metalness: 0.1
+    });
+
+    // 1. Central Spine Truss
+    const spineLength = 170;
+    const spineGeo = new THREE.CylinderGeometry(4.2, 4.8, spineLength, 8, 16, true);
+    spineGeo.rotateX(Math.PI / 2);
+    const spineMesh = new THREE.Mesh(spineGeo, arkHullMat);
+    arkGroup.add(spineMesh);
+
+    // Spine Structural Rings
+    for (let z = -spineLength / 2 + 10; z <= spineLength / 2 - 10; z += 15) {
+      const ringGeo = new THREE.TorusGeometry(6.0, 0.4, 8, 16);
+      const ringMesh = new THREE.Mesh(ringGeo, arkHullMat);
+      ringMesh.position.set(0, 0, z);
+      arkGroup.add(ringMesh);
+    }
+
+    // Docking Pylon
+    const dockPylonGeo = new THREE.CylinderGeometry(2.8, 3.8, 18, 12);
+    dockPylonGeo.rotateZ(Math.PI / 2);
+    const dockPylonMesh = new THREE.Mesh(dockPylonGeo, arkHullMat);
+    dockPylonMesh.position.set(0, 0, 75);
+    arkGroup.add(dockPylonMesh);
+
+    const arkDockRingGeo = new THREE.TorusGeometry(2.2, 0.35, 12, 32);
+    const arkDockRingMat = new THREE.MeshStandardMaterial({
+      color: 0x334455,
+      emissive: 0x00d4ff,
+      emissiveIntensity: 0.3
+    });
+    const arkDockRing = new THREE.Mesh(arkDockRingGeo, arkDockRingMat);
+    arkDockRing.position.set(0, 0, 84);
+    arkGroup.add(arkDockRing);
+
+    // Energy Conduit Veins System
+    const conduitCount = 120;
+    const conduitGeo = new THREE.BufferGeometry();
+    const conduitPositions = new Float32Array(conduitCount * 6);
+
+    for (let i = 0; i < conduitCount; i++) {
+      const angle = (i / conduitCount) * Math.PI * 2;
+      const z1 = -75 + (i % 10) * 15;
+      const z2 = z1 + 13;
+      const r = 5.0;
+
+      conduitPositions[i * 6] = Math.cos(angle) * r;
+      conduitPositions[i * 6 + 1] = Math.sin(angle) * r;
+      conduitPositions[i * 6 + 2] = z1;
+
+      conduitPositions[i * 6 + 3] = Math.cos(angle) * r;
+      conduitPositions[i * 6 + 4] = Math.sin(angle) * r;
+      conduitPositions[i * 6 + 5] = z2;
+    }
+    conduitGeo.setAttribute('position', new THREE.BufferAttribute(conduitPositions, 3));
+
+    const conduitMat = new THREE.ShaderMaterial({
+      uniforms: {
+        wavePos: { value: -100.0 },
+        glowColor: { value: new THREE.Color(0x00ffc4) },
+        awakening: { value: 0.0 }
+      },
+      vertexShader: `
+        varying vec3 vPos;
+        void main() {
+          vPos = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vPos;
+        uniform float wavePos;
+        uniform vec3 glowColor;
+        uniform float awakening;
+
+        void main() {
+          float dist = abs(vPos.z - wavePos);
+          float wavePulse = exp(-dist * 0.08) * 3.0;
+          float baseGlow = awakening * 0.6;
+          float total = max(wavePulse, baseGlow);
+          if (total < 0.05) discard;
+          gl_FragColor = vec4(glowColor * (1.0 + total * 1.5), min(1.0, total));
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const conduitLines = new THREE.LineSegments(conduitGeo, conduitMat);
+    arkGroup.add(conduitLines);
+
+    // 2. Rotating Centrifugal Gravity Habitat Torus
+    const habRingGroup = new THREE.Group();
+    const habTorusGeo = new THREE.TorusGeometry(36, 2.6, 16, 48);
+    const habTorusMesh = new THREE.Mesh(habTorusGeo, arkHullMat);
+    habRingGroup.add(habTorusMesh);
+
+    for (let a = 0; a < 6; a++) {
+      const angle = (a / 6) * Math.PI * 2;
+      const spokeGeo = new THREE.CylinderGeometry(0.7, 1.1, 36, 8);
+      const spokeMesh = new THREE.Mesh(spokeGeo, arkHullMat);
+      spokeMesh.position.set(Math.cos(angle) * 18, Math.sin(angle) * 18, 0);
+      spokeMesh.rotation.z = angle + Math.PI / 2;
+      habRingGroup.add(spokeMesh);
+    }
+    habRingGroup.position.set(0, 0, -25);
+    arkGroup.add(habRingGroup);
+
+    // 3. Four Sophisticated Biome Domes
+    const biomeDomes = [];
+    const biomeGrowLights = [];
+    const biomePositions = [
+      { x: 30, y: 0, z: 18, rot: [0, 0, -Math.PI / 2] },
+      { x: -30, y: 0, z: 18, rot: [0, 0, Math.PI / 2] },
+      { x: 0, y: 30, z: -35, rot: [Math.PI / 2, 0, 0] },
+      { x: 0, y: -30, z: -35, rot: [-Math.PI / 2, 0, 0] }
+    ];
+
+    biomePositions.forEach((bPos) => {
+      const domeContainer = new THREE.Group();
+      domeContainer.position.set(bPos.x, bPos.y, bPos.z);
+      domeContainer.rotation.set(bPos.rot[0], bPos.rot[1], bPos.rot[2]);
+
+      const pylonGeo = new THREE.CylinderGeometry(2.0, 3.0, 26, 8);
+      const pylonMesh = new THREE.Mesh(pylonGeo, arkHullMat);
+      pylonMesh.position.set(0, -13, 0);
+      domeContainer.add(pylonMesh);
+
+      // Glass Sphere Envelope
+      const domeGeo = new THREE.SphereGeometry(16, 32, 32);
+      const domeGlass = new THREE.Mesh(domeGeo, arkGlassMat);
+      domeContainer.add(domeGlass);
+
+      const domeFrost = new THREE.Mesh(domeGeo, arkFrostGlassMat);
+      domeContainer.add(domeFrost);
+
+      const frameRing = new THREE.Mesh(new THREE.TorusGeometry(16.2, 0.4, 8, 32), arkHullMat);
+      domeContainer.add(frameRing);
+
+      // Interior Terraced Core
+      const coreTerrainGeo = new THREE.SphereGeometry(13.2, 24, 24);
+      const coreTerrainMesh = new THREE.Mesh(coreTerrainGeo, arkLushFloraMat);
+      domeContainer.add(coreTerrainMesh);
+
+      // Interior Tree Clusters with varied natural greens
+      for (let t = 0; t < 28; t++) {
+        const u = Math.random();
+        const v = Math.random();
+        const th = u * Math.PI * 2;
+        const ph = Math.acos(2 * v - 1);
+        const trR = 13.8;
+        const treeGeo = new THREE.SphereGeometry(0.9 + Math.random() * 0.9, 8, 8);
+        const treeMesh = new THREE.Mesh(treeGeo, arkLushFloraMat);
+        treeMesh.position.set(
+          trR * Math.sin(ph) * Math.cos(th),
+          trR * Math.sin(ph) * Math.sin(th),
+          trR * Math.cos(ph)
+        );
+        domeContainer.add(treeMesh);
+      }
+
+      // Interior Biosphere Grow Light System
+      const growLight = new THREE.PointLight(0x3388ff, 0.4, 45);
+      growLight.position.set(0, 0, 0);
+      domeContainer.add(growLight);
+      biomeGrowLights.push(growLight);
+
+      arkGroup.add(domeContainer);
+      biomeDomes.push({ container: domeContainer, frost: domeFrost, light: growLight });
+    });
+
+    // 4. Eight Giant Articulated Solar Petals ("The Bloom")
+    const petalCount = 8;
+    const solarPetals = [];
+
+    for (let p = 0; p < petalCount; p++) {
+      const angle = (p / petalCount) * Math.PI * 2;
+      const petalPivot = new THREE.Group();
+      petalPivot.position.set(Math.cos(angle) * 6.0, Math.sin(angle) * 6.0, -45);
+      petalPivot.rotation.z = angle;
+
+      const armGeo = new THREE.BoxGeometry(1.0, 1.0, 8);
+      const armMesh = new THREE.Mesh(armGeo, arkHullMat);
+      armMesh.position.set(0, 0, 4);
+      petalPivot.add(armMesh);
+
+      const mirrorSailGeo = new THREE.BufferGeometry();
+      const sailWidth = 12;
+      const sailLength = 44;
+      const sailVerts = new Float32Array([
+        -2, 0, 0,     2, 0, 0,      sailWidth, 0, sailLength * 0.6,
+        -2, 0, 0,     sailWidth, 0, sailLength * 0.6,   -sailWidth, 0, sailLength * 0.6,
+        -sailWidth, 0, sailLength * 0.6,   sailWidth, 0, sailLength * 0.6,   0, 0, sailLength
+      ]);
+      mirrorSailGeo.setAttribute('position', new THREE.BufferAttribute(sailVerts, 3));
+      mirrorSailGeo.computeVertexNormals();
+
+      const mirrorMesh = new THREE.Mesh(mirrorSailGeo, arkGoldSolarMat);
+      mirrorMesh.position.set(0, 0.6, 8);
+      petalPivot.add(mirrorMesh);
+
+      petalPivot.rotation.x = 0.12;
+
+      arkGroup.add(petalPivot);
+      solarPetals.push(petalPivot);
+    }
+
+    // 5. Genesis Spores Restoration Fleet Particle Stream
+    const sporeCount = 2200;
+    const sporeGeo = new THREE.BufferGeometry();
+    const sporePositions = new Float32Array(sporeCount * 3);
+    const sporeVelocities = [];
+    const sporeColors = new Float32Array(sporeCount * 3);
+
+    for (let i = 0; i < sporeCount; i++) {
+      sporePositions[i * 3] = 0;
+      sporePositions[i * 3 + 1] = 0;
+      sporePositions[i * 3 + 2] = 0;
+
+      const spread = 0.35;
+      sporeVelocities.push({
+        x: (Math.random() - 0.5) * spread + 0.1,
+        y: -0.4 - Math.random() * 0.8,
+        z: -0.5 - Math.random() * 0.9,
+        progress: Math.random(),
+        speed: 0.8 + Math.random() * 1.2
+      });
+
+      sporeColors[i * 3] = 0.95;
+      sporeColors[i * 3 + 1] = 0.85;
+      sporeColors[i * 3 + 2] = 0.35;
+    }
+    sporeGeo.setAttribute('position', new THREE.BufferAttribute(sporePositions, 3));
+    sporeGeo.setAttribute('color', new THREE.BufferAttribute(sporeColors, 3));
+
+    const sporeMat = new THREE.ShaderMaterial({
+      uniforms: {
+        activeFactor: { value: 0.0 }
+      },
+      vertexShader: `
+        attribute vec3 color;
+        varying vec3 vColor;
+        uniform float activeFactor;
+        void main() {
+          vColor = color;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = (45.0 / -mvPosition.z) * activeFactor;
+          gl_Position = projectionMatrix * mvPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        uniform float activeFactor;
+        void main() {
+          vec2 pt = gl_PointCoord - vec2(0.5);
+          float d = length(pt);
+          if (d > 0.5) discard;
+          float glow = smoothstep(0.5, 0.0, d);
+          gl_FragColor = vec4(vColor * 1.5, glow * activeFactor * 0.9);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const sporeParticles = new THREE.Points(sporeGeo, sporeMat);
+    arkGroup.add(sporeParticles);
+
+    scene.add(arkGroup);
+
+    /* =========================================================================
+       8. POST-PROCESSING PIPELINE
+       ========================================================================= */
+    const composer = new THREE.EffectComposer(renderer);
+    composer.addPass(new THREE.RenderPass(scene, camera));
+
+    const bloomPass = new THREE.UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      0.85,
+      0.35,
+      0.82
+    );
+    composer.addPass(bloomPass);
+
+    const filmGradeShader = {
+      uniforms: {
+        tDiffuse: { value: null },
+        time: { value: 0 },
+        vignette: { value: 0.85 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float time;
+        uniform float vignette;
+        varying vec2 vUv;
+
+        float rand(vec2 co){
+          return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        void main() {
+          vec4 texColor = texture2D(tDiffuse, vUv);
+          
+          vec3 col = texColor.rgb;
+          col.r = pow(col.r, 0.95) * 1.02;
+          col.g = pow(col.g, 0.98);
+          col.b = pow(col.b, 1.02) * 1.05;
+
+          vec2 center = vUv - vec2(0.5);
+          float dist = length(center);
+          float vig = smoothstep(0.85, 0.25, dist * vignette);
+          col *= vig;
+
+          float grain = (rand(vUv * 2.5 + fract(time)) - 0.5) * 0.022;
+          col += grain;
+
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `
+    };
+    const gradePass = new THREE.ShaderPass(filmGradeShader);
+    composer.addPass(gradePass);
+
+    /* =========================================================================
+       9. DETERMINISTIC 48-SECOND CINEMATIC DIRECTOR & CHOREOGRAPHY
+       ========================================================================= */
+    const TOTAL_DURATION = 48.0;
+
+    const camPos = new THREE.Vector3();
+    const camTarget = new THREE.Vector3();
+
+    function updateCinematic(timeSec) {
+      const T = timeSec % TOTAL_DURATION;
+
+      let arkAwakening = 0.0;
+      let waveFrontZ = 120.0;
+      let petalUnfold = 0.0;
+      let sporeActive = 0.0;
+
+      // -------------------------------------------------------------
+      // SHOT 1: THE APPROACH (0.0s - 7.0s)
+      // -------------------------------------------------------------
+      if (T < 7.0) {
+        const u = T / 7.0;
+        shipGroup.position.set(
+          -18.0 * (1.0 - u * 0.6),
+          6.0 * (1.0 - u * 0.4),
+          240.0 - u * 105.0
+        );
+        shipGroup.rotation.set(0.03, -0.06, -0.08 + Math.sin(T * 1.5) * 0.02);
+
+        exhaustCones.forEach(c => {
+          c.scale.set(1.0, 1.0, 1.2 + Math.sin(T * 30.0) * 0.1);
+          c.material.uniforms.thrust.value = 1.2;
+        });
+
+        const shipP = shipGroup.position;
+        camPos.set(
+          shipP.x + 10.5 + Math.sin(u * 1.5) * 1.0,
+          shipP.y + 4.2 + u * 1.0,
+          shipP.z + 18.0 - u * 5.0
+        );
+        camTarget.set(
+          shipP.x * 0.5,
+          shipP.y * 0.5,
+          arkGroup.position.z + 25.0
+        );
+        camera.fov = 42.0;
+      }
+      // -------------------------------------------------------------
+      // SHOT 2: SCALE & DECELERATION DOCKING (7.0s - 16.5s)
+      // -------------------------------------------------------------
+      else if (T < 16.5) {
+        const u = (T - 7.0) / 9.5;
+        
+        const shipZ = THREE.MathUtils.lerp(135.0, 91.0, Math.min(1.0, u * 1.15));
+        const shipX = THREE.MathUtils.lerp(-8.0, 0.0, Math.min(1.0, u * 1.1));
+        const shipY = THREE.MathUtils.lerp(3.0, 0.0, Math.min(1.0, u * 1.1));
+
+        shipGroup.position.set(shipX, shipY, shipZ);
+        shipGroup.rotation.set(
+          THREE.MathUtils.lerp(0.03, 0.0, u),
+          THREE.MathUtils.lerp(-0.06, 0.0, u),
+          THREE.MathUtils.lerp(-0.08, 0.0, u)
+        );
+
+        const throttle = Math.max(0.12, 1.0 - u * 1.2);
+        exhaustCones.forEach(c => {
+          c.scale.set(throttle, throttle, throttle * 0.7);
+          c.material.uniforms.thrust.value = throttle;
+        });
+
+        if (u > 0.85) {
+          const clampFlare = Math.sin((u - 0.85) * 20.0) * 0.5 + 0.5;
+          arkDockRing.material.emissiveIntensity = 0.5 + clampFlare * 2.5;
+        }
+
+        const camAngle = 0.85 + u * 0.65;
+        const camDist = 110.0 - u * 20.0;
+        camPos.set(
+          Math.sin(camAngle) * camDist,
+          32.0 + Math.cos(camAngle) * 12.0,
+          95.0 + Math.cos(camAngle * 0.8) * 30.0
+        );
+        camTarget.set(shipGroup.position.x * 0.5, 0, 70.0);
+        camera.fov = 38.0;
+      }
+      // -------------------------------------------------------------
+      // SHOT 3: IGNITION & SYSTEM REVIVAL (16.5s - 27.5s)
+      // -------------------------------------------------------------
+      else if (T < 27.5) {
+        const u = (T - 16.5) / 11.0;
+        shipGroup.position.set(0, 0, 91.0);
+        shipGroup.rotation.set(0, 0, 0);
+
+        waveFrontZ = 85.0 - u * 175.0;
+        arkAwakening = Math.min(1.0, u * 1.2);
+
+        biomeDomes.forEach((d) => {
+          d.frost.material.opacity = Math.max(0.0, 0.75 - arkAwakening * 0.85);
+          d.light.color.setRGB(
+            0.2 + arkAwakening * 0.8,
+            0.5 + arkAwakening * 0.5,
+            0.9 - arkAwakening * 0.4
+          );
+          d.light.intensity = 0.5 + arkAwakening * 3.0;
+        });
+
+        exhaustCones.forEach(c => {
+          c.scale.set(0.1, 0.1, 0.12);
+          c.material.uniforms.thrust.value = 0.12;
+        });
+
+        const dollyZ = 65.0 - u * 95.0;
+        const orbitA = 0.9 + u * 1.5;
+        camPos.set(
+          Math.cos(orbitA) * 62.0,
+          26.0 + Math.sin(u * 3.14) * 10.0,
+          dollyZ + 25.0
+        );
+        camTarget.set(0, 4.0, dollyZ - 10.0);
+        camera.fov = 44.0;
+      }
+      // -------------------------------------------------------------
+      // SHOT 4: THE BLOOM (27.5s - 38.0s)
+      // -------------------------------------------------------------
+      else if (T < 38.0) {
+        const u = (T - 27.5) / 10.5;
+        shipGroup.position.set(0, 0, 91.0);
+        arkAwakening = 1.0;
+        waveFrontZ = -100.0;
+
+        petalUnfold = THREE.MathUtils.smoothstep(u, 0.05, 0.92);
+
+        biomeDomes.forEach(d => {
+          d.frost.material.opacity = 0.0;
+          d.light.intensity = 3.5;
+        });
+
+        const craneY = -45.0 + u * 60.0;
+        const craneDist = 105.0 - u * 15.0;
+        const rotPhi = 0.6 + u * 0.6;
+
+        camPos.set(
+          Math.sin(rotPhi) * craneDist,
+          craneY,
+          -35.0 + Math.cos(rotPhi) * 45.0
+        );
+        camTarget.set(0, 0, -15.0);
+        camera.fov = 40.0;
+      }
+      // -------------------------------------------------------------
+      // SHOT 5: GRAND GENESIS DISPERSAL & PAYOFF (38.0s - 48.0s)
+      // -------------------------------------------------------------
+      else {
+        const u = (T - 38.0) / 10.0;
+        shipGroup.position.set(0, 0, 91.0);
+        arkAwakening = 1.0;
+        petalUnfold = 1.0;
+        sporeActive = THREE.MathUtils.smoothstep(u, 0.05, 0.85);
+
+        biomeDomes.forEach(d => {
+          d.frost.material.opacity = 0.0;
+          d.light.intensity = 3.8;
+        });
+
+        let occlusionFade = 1.0;
+        if (T > 46.5) {
+          const fadeU = (T - 46.5) / 1.5;
+          occlusionFade = 1.0 - Math.pow(fadeU, 2.0);
+        }
+
+        const panAngle = 0.75 + u * 0.45;
+        const panDist = 160.0 + u * 20.0;
+        camPos.set(
+          Math.sin(panAngle) * panDist,
+          36.0 + Math.sin(u * 2.0) * 8.0,
+          Math.cos(panAngle) * panDist - 10.0
+        );
+        camTarget.set(0, -4.0, 10.0);
+        camera.fov = 38.0;
+
+        renderer.toneMappingExposure = 1.35 * occlusionFade;
+      }
+
+      if (T <= 46.5) {
+        renderer.toneMappingExposure = 1.35;
+      }
+
+      solarPetals.forEach((petal) => {
+        const targetRotX = 0.12 + petalUnfold * 1.36;
+        petal.rotation.x = targetRotX;
+      });
+
+      conduitMat.uniforms.wavePos.value = waveFrontZ;
+      conduitMat.uniforms.awakening.value = arkAwakening;
+
+      sporeMat.uniforms.activeFactor.value = sporeActive;
+      if (sporeActive > 0.01) {
+        const positions = sporeGeo.attributes.position.array;
+        for (let i = 0; i < sporeCount; i++) {
+          const v = sporeVelocities[i];
+          v.progress += v.speed * 0.003;
+          if (v.progress > 1.0) v.progress = 0.0;
+
+          const p = v.progress;
+          const curveX = Math.sin(p * 3.14 + i) * 25.0 * p;
+          const curveY = -p * 200.0;
+          const curveZ = -p * 240.0 + (i % 20);
+
+          positions[i * 3] = curveX;
+          positions[i * 3 + 1] = curveY;
+          positions[i * 3 + 2] = curveZ;
+        }
+        sporeGeo.attributes.position.needsUpdate = true;
+      }
+
+      const rotMultiplier = (arkAwakening > 0.1) ? 1.0 + arkAwakening * 2.0 : 1.0;
+      habRingGroup.rotation.z += 0.002 * rotMultiplier;
+    }
+
+    /* =========================================================================
+       10. MAIN ANIMATION & RENDER LOOP
+       ========================================================================= */
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const elapsedTime = (window._overrideTime !== null && window._overrideTime !== undefined)
+        ? window._overrideTime
+        : clock.getElapsedTime();
+
+      updateCinematic(elapsedTime);
+
+      earthGlobe.rotation.y = elapsedTime * 0.004;
+      cloudMesh1.rotation.y = elapsedTime * 0.0065;
+      cloudMesh2.rotation.y = elapsedTime * 0.009 + 0.8;
+
+      auroraMat.uniforms.time.value = elapsedTime;
+      exhaustCones.forEach(c => {
+        c.material.uniforms.time.value = elapsedTime;
+      });
+      filmGradeShader.uniforms.time.value = elapsedTime;
+
+      coronaMesh.lookAt(camera.position);
+
+      camera.position.copy(camPos);
+      camera.lookAt(camTarget);
+      camera.updateProjectionMatrix();
+
+      composer.render();
+    }
+
+    window.addEventListener('resize', onWindowResize, false);
+    function onWindowResize() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      composer.setSize(w, h);
+      bloomPass.setSize(w, h);
+    }
+
+    animate();
+
+  })();
+  </script>
+</body>
+</html>
